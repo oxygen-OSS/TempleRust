@@ -1,0 +1,9 @@
+[package]
+name = "hcc"
+version = "0.1.0"
+edition = "2021"
+description = "Host AOT compiler for the HolyC subset: emits flat x86-64 blobs"
+
+[[bin]]
+name = "hcc"
+path = "src/main.rs"

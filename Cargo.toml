@@ -1,0 +1,18 @@
+[package]
+name = "templeos-rs"
+version = "0.1.0"
+edition = "2021"
+description = "A tiny TempleOS-inspired operating system in Rust"
+
+[[bin]]
+name = "kernel"
+path = "src/main.rs"
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+opt-level = 2
+codegen-units = 1
+lto = false
