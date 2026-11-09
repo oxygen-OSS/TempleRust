@@ -1,0 +1,80 @@
+OXYGEN PUBLIC LICENSE 1.1 "OPL"
+Copyright © 2026 Oxygen Open-Source Software
+
+PREAMBLE
+This license grants rights for non-commercial use while explicitly prohibiting 
+commercial exploitation. It implements weak copyleft to protect community 
+contributions while preventing corporate capture.
+
+1. DEFINITIONS
+1.1 "Software" means the original work covered by this License.
+1.2 "You" means an individual or entity exercising rights under this License.
+1.3 "Non-Commercial Use" means use that does not generate revenue, directly 
+    or indirectly, and is not for the benefit of a for-profit entity.
+1.4 "Commercial Use" means any use intended for or resulting in commercial 
+    advantage or monetary compensation, including but not limited to:
+    a) Internal use by for-profit organizations
+    b) Use in products or services offered for sale
+    c) Use that reduces costs for a commercial entity
+1.5 "Modified Software" means a work based upon the Software.
+1.6 "Source Code" means the preferred form for making modifications.
+1.7 "Copyleft License" means any license that requires Source Code sharing.
+1.8 "OPL" is this license.
+1.9 "Contributor" means an entity who has submitted code, modifications, additions to the software.
+1.10 "Compatible" means it can be legally used with the OPL, having copyleft principles and banning Commercial Use.
+
+2. WARRANTY DISCLAIMER & LIABILITY LIMITATION
+THE SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTIES OF ANY KIND.
+
+3. NON-COMMERCIAL USE RIGHTS
+Subject to the terms of this License, for Non-Commercial Use only, You may:
+3.1 Use, copy, and run the Software.
+3.2 Study and modify the Software.
+3.3 Redistribute copies of the original or modified Software.
+3.4 Incorporate the Software into other Software.
+3.5 Reverse-engineer for interoperability purposes.
+
+4. COMMERCIAL USE PROHIBITION
+4.1 Commercial Use of this Software is STRICTLY PROHIBITED.
+4.2 This includes but is not limited to:
+    a) Internal use within commercial entities
+    b) Incorporation into commercial products or services
+    c) Using the Software to make profit
+
+5. MODIFIED SOFTWARE & WEAK COPYLEFT
+5.1 When creating Modified Software:
+    a) Modifications to existing source files must remain under OPL-1.1, while new source files may be licensed under older
+    OPL versions or OPL-compatible licenses.
+    b) Proprietary licenses for new files are prohibited.
+5.2 Distribution of Modified Software requires:
+    a) Preservation of all copyright notices;
+    b) Inclusion of this License in all source files covered by OPL-1.1;
+    c) Availability of Source Code for all files.
+5.3 The weak copyleft applies only to Non-Commercial Use. Commercial Use 
+    of any Modified Software remains prohibited under Clause 4.
+
+6. ATTRIBUTION REQUIREMENTS
+6.1 All distributions of the Software must include:
+    a) This License;
+    b) A copy of the original copyright notice(s);
+    c) A notice stating "This software is licensed under the OPL-1.1".
+6.2 Modified versions must include clear notice of changes made.
+
+7. PATENT GRANT
+Each contributor grants You a non-exclusive, worldwide, royalty-free patent 
+license under their essential patent claims to make, use and import 
+the Software for Non-Commercial Use only.
+
+8. BACKWARD COMPATIBILITY
+Newer OPL versions may be combined with older OPL ones.
+
+9. TERMINATION
+9.1 Your rights under this License terminate automatically if you fail to comply.
+9.2 Commercial Use results in immediate termination.
+9.3 Upon termination, you must cease all use and distribution of the Software.
+
+10. MISCELLANEOUS
+10.1 This License represents the agreement to using the Software.
+10.2 If something in the license is unenforceable, the rest of the license is in force.
+
+END OF TERMS AND CONDITIONS
