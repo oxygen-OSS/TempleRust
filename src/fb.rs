@@ -168,6 +168,89 @@ pub fn fill_rect(x: usize, y: usize, w: usize, h: usize, color: u8) {
     }
 }
 
+// --- runtime mode change ------------------------------------------------------
+//
+// The Bochs/QEMU VBE "dispi" registers (port 0x1CE index / 0x1CF data) can be
+// reprogrammed directly from ring 0, no BIOS round-trip needed. The linear
+// framebuffer base stays fixed, so only the scanout geometry and pitch change.
+
+const DISPI_INDEX: u16 = 0x1ce;
+const DISPI_DATA: u16 = 0x1cf;
+const DISPI_XRES: u16 = 1;
+const DISPI_YRES: u16 = 2;
+const DISPI_BPP: u16 = 3;
+const DISPI_ENABLE: u16 = 4;
+const DISPI_VIRT_W: u16 = 6;
+const DISPI_VIRT_H: u16 = 7;
+const DISPI_ENABLED: u16 = 0x01;
+// keep fb contents & tell the LFB is the visible region
+const DISPI_NOCLEARMEM: u16 = 0x20;
+const DISPI_LFB: u16 = 0x40;
+
+fn dispi_write(index: u16, val: u16) {
+    unsafe {
+        core::arch::asm!("out dx, al",
+            in("dx") DISPI_INDEX, in("al") (index as u8),
+            options(nomem, nostack, preserves_flags));
+        core::arch::asm!("out dx, ax",
+            in("dx") DISPI_DATA, in("ax") val,
+            options(nomem, nostack, preserves_flags));
+    }
+}
+
+/// The terminal is always 80x30 cells; clamp the mode to something sane and
+/// keep the width a multiple of 8 as the hardware expects.
+pub const MIN_W: usize = 320;
+pub const MAX_W: usize = 1920;
+pub const MIN_H: usize = 200;
+pub const MAX_H: usize = 1080;
+
+/// Reset the stored cursor position to a valid spot on the current screen.
+pub fn clamp_mouse() {
+    crate::mouse::clamp_to_screen();
+}
+
+/// Switch the linear framebuffer backend to `w`x`h` at runtime. Returns false
+/// when unsupported (planar VGA fallback) or out of the supported range.
+pub fn set_resolution(w: usize, h: usize) -> bool {
+    if !(unsafe { (*m()).linear }) {
+        return false;
+    }
+    let w = w.clamp(MIN_W, MAX_W) & !7;
+    let h = h.clamp(MIN_H, MAX_H);
+    if w < MIN_W || h < MIN_H {
+        return false;
+    }
+    unsafe {
+        let p = m();
+        if (*p).width == w && (*p).height == h {
+            return true;
+        }
+        // disable, program, re-enable: the sequence the hardware expects
+        dispi_write(DISPI_ENABLE, 0);
+        dispi_write(DISPI_XRES, w as u16);
+        dispi_write(DISPI_YRES, h as u16);
+        dispi_write(DISPI_BPP, 32);
+        dispi_write(DISPI_VIRT_W, w as u16);
+        dispi_write(DISPI_VIRT_H, h as u16);
+        dispi_write(DISPI_ENABLE, DISPI_ENABLED | DISPI_NOCLEARMEM | DISPI_LFB);
+
+        (*p).width = w;
+        (*p).height = h;
+        (*p).pitch = w * 4;
+        (*p).bpp = 32;
+        (*p).cell_w = (w / COLS).max(1);
+        (*p).cell_h = (h / ROWS).max(1);
+    }
+    // Keep the HolyC app ABI in sync so blobs see the new geometry.
+    unsafe {
+        crate::hcapi::HC_FBW = w as u32;
+        crate::hcapi::HC_FBH = h as u32;
+        crate::hcapi::HC_FBPITCH = (w * 4) as u32;
+    }
+    true
+}
+
 /// Draw one glyph at cell (`col`, `row`), scaled to the cell size.
 pub fn draw_glyph(col: usize, row: usize, ch: u8, color: u8) {
     let p = unsafe { &*m() };

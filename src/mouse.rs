@@ -134,6 +134,19 @@ const CURSOR_PIXELS: [[u8; CURSOR_W]; CURSOR_H] = [
     [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
 ];
 
+/// Keep the stored cursor position inside the current mode (call after a
+/// resolution change shrinks the screen).
+pub fn clamp_to_screen() {
+    unsafe {
+        let m = &mut *core::ptr::addr_of_mut!(MOUSE);
+        let w = fb::width() as isize;
+        let h = fb::height() as isize;
+        m.x = m.x.clamp(0, w.saturating_sub(CURSOR_W as isize));
+        m.y = m.y.clamp(0, h.saturating_sub(CURSOR_H as isize));
+        m.cursor_visible = true;
+    }
+}
+
 #[allow(dead_code)]
 pub fn get_pos() -> (usize, usize) {
     unsafe {

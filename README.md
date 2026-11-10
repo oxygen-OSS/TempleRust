@@ -139,7 +139,9 @@ hcc/target/release/hcc apps/Hello.HC build/apps/Hello.bin --api build/kernel_api
 | `Cls;` / `Clear;` | clear the screen |
 | `Help;` / `Man;` | master command and documentation index (`<F1>`) |
 | `About;` / `Ver;` | system information |
-| `Bench;` / `FPS;` | measure fill and text-repaint speed |
+| `Bench;` | measure fill and text-repaint speed |
+| `Fps(n);` | set the main-loop frame-rate cap (1..120, default 60); `Fps;` shows cap & measured rate (also live in the menu bar) |
+| `Video(1280x800);` | change screen resolution at runtime (LFB modes; also `Video(1280,800);`) |
 | `Snake;` | play snake arcade game |
 | `Life;` | Conway's Game of Life simulation |
 | `Lines;` / `Graphics;` | 16-color geometric line demo |

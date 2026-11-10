@@ -28,6 +28,141 @@ pub const YELLOW: u8 = 14;
 pub const WHITE: u8 = 15;
 
 pub const MENU_ROW: usize = 0;
+
+// --- frame pacing & measured FPS ---------------------------------------------
+
+/// Frame-rate limit of the OS main loop. Default: 60 FPS (was an unplanned
+/// spin-wait before). Runtime-changeable with the `Fps(n);` command.
+static mut FPS_CAP: u64 = 60;
+/// Achieved frame rate of the main loop, exponentially averaged.
+static mut MEASURED_FPS: u64 = 60;
+/// TSC stamp of the end of the previous frame.
+static mut LAST_FRAME: u64 = 0;
+
+pub fn fps_cap() -> u64 {
+    unsafe { *core::ptr::addr_of!(FPS_CAP) }
+}
+
+pub fn fps() -> u64 {
+    unsafe { *core::ptr::addr_of!(MEASURED_FPS) }
+}
+
+/// Set the frame-rate cap (clamped to 1..120). `Fps(n);` shell command.
+pub fn set_fps_cap(n: u64) {
+    let cap = n.clamp(1, 120);
+    unsafe {
+        core::ptr::addr_of_mut!(FPS_CAP).write(cap);
+        // re-measure from a clean slate so the EMA doesn't take ~seconds
+        // to converge onto the new rate
+        core::ptr::addr_of_mut!(MEASURED_FPS).write(cap);
+        core::ptr::addr_of_mut!(LAST_FRAME).write(0);
+    }
+}
+
+/// Logical (visible) CPU count, straight from CPUID. Used by the menu bar.
+/// Some models report an empty count in CPUID.1H.EBX[23:16]; fall back to 1.
+pub fn logical_cpus() -> u32 {
+    let r = core::arch::x86_64::__cpuid(1);
+    ((r.ebx >> 16) & 0xffff).max(1)
+}
+
+fn push_num(buf: &mut [u8], i: &mut usize, mut n: u64) {
+    if *i >= buf.len() {
+        return;
+    }
+    if n == 0 {
+        buf[*i] = b'0';
+        *i += 1;
+        return;
+    }
+    let mut digits = [0u8; 4];
+    let mut d = 0;
+    while n > 0 && d < 4 {
+        digits[d] = b'0' + (n % 10) as u8;
+        n /= 10;
+        d += 1;
+    }
+    for j in (0..d).rev() {
+        if *i >= buf.len() {
+            break;
+        }
+        buf[*i] = digits[j];
+        *i += 1;
+    }
+}
+
+/// Build "CPU <n>  FPS <rate>" from live data into `buf`, return the slice.
+fn info_str(buf: &mut [u8]) -> &str {
+    let mut i = 0usize;
+    for &c in b"CPU " {
+        if i < buf.len() {
+            buf[i] = c;
+            i += 1;
+        }
+    }
+    push_num(buf, &mut i, logical_cpus() as u64);
+    for &c in b"  FPS " {
+        if i < buf.len() {
+            buf[i] = c;
+            i += 1;
+        }
+    }
+    push_num(buf, &mut i, fps());
+    core::str::from_utf8(&buf[..i]).unwrap_or("CPU 1  FPS 60")
+}
+
+fn menu_colors() -> (u8, u8) {
+    match theme() {
+        Theme::Classic => (BROWN, WHITE),
+        Theme::Blue => (LIGHT_GRAY, BLACK),
+        Theme::Dark => (DARK_GRAY, WHITE),
+    }
+}
+
+pub fn draw_panel_info() {
+    let (menu_bg, menu_fg) = menu_colors();
+    let mut buf = [0u8; 24];
+    let info = info_str(&mut buf);
+    // Clear a region wide enough for every possible value of the info line.
+    let slack = 6usize;
+    let x0 = COLS.saturating_sub(info.len() + slack + 1);
+    for x in x0..COLS {
+        put_at_colored(x, MENU_ROW, b' ', menu_fg, menu_bg);
+    }
+    if COLS > info.len() + 2 {
+        draw_text_at_colored(COLS - info.len() - 1, MENU_ROW, info, YELLOW, menu_bg);
+    }
+}/// One frame of the OS main loop: waits until the next frame slot so the loop
+/// runs at `FPS_CAP` overall, then records the achieved rate.
+pub fn frame_wait() {
+    let cap = fps_cap();
+    let tsc_pm = crate::shell::tsc_per_ms();
+    unsafe {
+        let last_p = core::ptr::addr_of_mut!(LAST_FRAME);
+        let t0 = *last_p;
+        let interval = tsc_pm * 1000 / cap;
+        if t0 != 0 && interval > 0 {
+            // only wait if the body of the previous frame finished early
+            if crate::shell::now().wrapping_sub(t0) < interval {
+                let due = t0.wrapping_add(interval);
+                while crate::shell::now() < due {
+                    core::hint::spin_loop();
+                }
+            }
+            // record the achieved rate; skip giant gaps (time spent inside
+            // apps that have their own loops)
+            let t = crate::shell::now();
+            let dt = t.wrapping_sub(t0);
+            if tsc_pm > 0 && dt > 0 && dt < tsc_pm * 2000 {
+                let inst = tsc_pm * 1000 / dt;
+                let mp = core::ptr::addr_of_mut!(MEASURED_FPS);
+                let old = *mp;
+                *mp = if old == 0 { inst } else { (old * 3 + inst) / 4 };
+            }
+        }
+        *last_p = crate::shell::now();
+    }
+}
 pub const TITLE_ROW: usize = 1;
 pub const BODY_TOP: usize = 2;
 pub const BODY_BOTTOM: usize = 28;
@@ -230,7 +365,8 @@ pub fn draw_chrome() {
     draw_text_at_colored(44, MENU_ROW, "[Theme]", menu_fg, menu_bg);
     draw_text_at_colored(52, MENU_ROW, "[Help]", menu_fg, menu_bg);
 
-    let right_info = "CPU 0   FPS 30";
+    let mut info_buf = [0u8; 24];
+    let right_info = info_str(&mut info_buf);
     if COLS > right_info.len() + 2 {
         draw_text_at_colored(COLS - right_info.len() - 1, MENU_ROW, right_info, YELLOW, menu_bg);
     }

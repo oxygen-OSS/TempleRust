@@ -7,6 +7,7 @@ use crate::keyboard::{self, Key};
 use crate::sound;
 use crate::term;
 use crate::vfs;
+use crate::{fb, mouse};
 
 const MAX_LINE: usize = 120;
 
@@ -96,8 +97,8 @@ pub fn tsc_per_ms() -> u64 {
 fn read_line(buf: &mut [u8]) -> usize {
     let mut len = 0usize;
     let mut on = true;
-    let mut last = now();
-
+    let mut last_blink = now();
+    let mut last_info = now();
     loop {
         if let Some(key) = keyboard::poll() {
             match key {
@@ -170,7 +171,7 @@ fn read_line(buf: &mut [u8]) -> usize {
             }
             on = true;
             term::cursor(true);
-            last = now();
+            last_blink = now();
         }
 
         if let Some(mev) = crate::mouse::poll() {
@@ -209,11 +210,19 @@ fn read_line(buf: &mut [u8]) -> usize {
         }
 
         let t = now();
-        if t.wrapping_sub(last) > tsc_per_ms() * 450 {
-            last = t;
+        if t.wrapping_sub(last_blink) > tsc_per_ms() * 450 {
+            last_blink = t;
             on = !on;
             term::cursor(on);
         }
+        // refresh the menu-bar info line once a second (real CPU/FPS data)
+        if t.wrapping_sub(last_info) > tsc_per_ms() * 1000 {
+            last_info = t;
+            term::draw_panel_info();
+        }
+
+        // one frame of the OS main loop: paces the REPL at term::fps_cap()
+        term::frame_wait();
         core::hint::spin_loop();
     }
 }
@@ -321,8 +330,12 @@ fn execute(line: &[u8]) {
         term::newline();
     } else if cmd.eq_ignore_ascii_case("CALC") {
         calc(arg);
-    } else if cmd.eq_ignore_ascii_case("BENCH") || cmd.eq_ignore_ascii_case("FPS") {
+    } else if cmd.eq_ignore_ascii_case("BENCH") {
         bench();
+    } else if cmd.eq_ignore_ascii_case("FPS") {
+        cmd_fps(arg);
+    } else if cmd.eq_ignore_ascii_case("VIDEO") {
+        cmd_video(arg);
     } else if cmd.eq_ignore_ascii_case("SNAKE") {
         snake();
     } else if cmd.eq_ignore_ascii_case("LIFE") {
@@ -403,6 +416,104 @@ pub fn cmd_dir(arg: &str) {
     if entries_found == 0 {
         term::set_fg(term::DARK_GRAY);
         term::print_str("  (empty or invalid directory)\n");
+        term::set_fg(term::theme_fg());
+    }
+}
+
+// --- FPS cap & display modes -------------------------------------------------
+
+fn cmd_fps(arg: &str) {
+    let arg = arg.trim();
+    if arg.is_empty() {
+        term::print_str("fps: cap ");
+        term::print_num(term::fps_cap() as i64);
+        term::print_str(", measured ");
+        term::print_num(term::fps() as i64);
+        term::print_str(" fps\n");
+        term::print_str("usage: Fps(n);  cap 1..120 (e.g. Fps(30); Fps(60);)\n");
+        return;
+    }
+    match arg.parse::<u64>() {
+        Ok(n) => {
+            term::set_fps_cap(n);
+            term::set_fg(term::GREEN);
+            term::print_str("fps: cap set to ");
+            term::print_num(term::fps_cap() as i64);
+            term::print_str("\n");
+            term::set_fg(term::theme_fg());
+            term::draw_panel_info();
+        }
+        Err(_) => {
+            term::set_fg(term::LIGHT_RED);
+            term::print_str("fps: bad number \"");
+            term::print_str(arg);
+            term::print_str("\"  usage: Fps(n); with n 1..120\n");
+            term::set_fg(term::theme_fg());
+        }
+    }
+}
+
+fn parse_wh(arg: &str) -> Option<(usize, usize)> {
+    let mut parts = arg.split(|c| c == 'x' || c == 'X' || c == ',' || c == ' ');
+    let w = parts.next()?.trim().parse::<usize>().ok()?;
+    let h = parts.next()?.trim().parse::<usize>().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((w, h))
+}
+
+fn cmd_video(arg: &str) {
+    let arg = arg.trim();
+    if arg.is_empty() {
+        term::print_str("video: ");
+        term::print_num(fb::width() as i64);
+        term::print_str("x");
+        term::print_num(fb::height() as i64);
+        term::print_str("x");
+        term::print_num(fb::bpp() as i64);
+        term::print_str(if fb::is_linear() { " linear\n" } else { " planar\n" });
+        term::print_str("usage: Video(1280x800); or Video(1280,800);\n");
+        return;
+    }
+    let (w, h) = match parse_wh(arg) {
+        Some(v) => v,
+        None => {
+            term::set_fg(term::LIGHT_RED);
+            term::print_str("video: bad mode \"");
+            term::print_str(arg);
+            term::print_str("\"  usage: Video(1280x800);\n");
+            term::set_fg(term::theme_fg());
+            return;
+        }
+    };
+    if fb::set_resolution(w, h) {
+        term::clear(); // rebuild the terminal on the new geometry (also redraws chrome)
+        term::set_fg(term::GREEN);
+        term::print_str("video: set ");
+        term::print_num(fb::width() as i64);
+        term::print_str("x");
+        term::print_num(fb::height() as i64);
+        term::print_str("x32\n");
+        term::set_fg(term::theme_fg());
+        // keep the mouse cursor on-screen and drawn over the new mode
+        fb::clamp_mouse();
+        mouse::draw_cursor();
+    } else {
+        term::set_fg(term::LIGHT_RED);
+        term::print_str("video: cannot set ");
+        term::print_num(w as i64);
+        term::print_str("x");
+        term::print_num(h as i64);
+        term::print_str(" (range ");
+        term::print_num(fb::MIN_W as i64);
+        term::print_str("x");
+        term::print_num(fb::MIN_H as i64);
+        term::print_str(" .. ");
+        term::print_num(fb::MAX_W as i64);
+        term::print_str("x");
+        term::print_num(fb::MAX_H as i64);
+        term::print_str(", width multiple of 8)\n");
         term::set_fg(term::theme_fg());
     }
 }

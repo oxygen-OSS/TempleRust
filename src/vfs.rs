@@ -156,6 +156,8 @@ $FG,LTGREEN$System & Diagnostics:$FG,WHITE$\n\
   $FG,YELLOW$Theme(\"name\");   $FG,WHITE$Switch theme (\"classic\" white canvas / \"blue\" / \"dark\")\n\
   $FG,YELLOW$DocToggle;      $FG,WHITE$Toggle raw DolDoc markup ($FG,YELLOW$<CTRL-T>$FG,WHITE$)\n\
   $FG,YELLOW$Cls;            $FG,WHITE$Clear screen\n\
+  $FG,YELLOW$Fps(n);         $FG,WHITE$Set the main-loop frame-rate cap (e.g. Fps(30); Fps(60); Fps;)\n\
+  $FG,YELLOW$Video(w x h);   $FG,WHITE$Change screen resolution at runtime (e.g. Video(1280x800);)\n\
   $FG,YELLOW$Bench;          $FG,WHITE$Measure fill & text repaint FPS\n\
   $FG,YELLOW$Reboot; / Halt; $FG,WHITE$Reboot or halt system\n\n\
 $FG,LTGREEN$Compiled HolyC Apps (AOT):$FG,WHITE$\n\
