@@ -143,8 +143,7 @@ pub extern "C" fn HC_Sleep(ms: i64) -> i64 {
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".hcapi")]
 pub extern "C" fn HC_KEY() -> i64 {
-    if let Some(k) = keyboard::poll() {
-        return match k {
+    if let Some(k) = keyboard::poll() {        return match k {
             Key::Char(c) => c as i64,
             Key::Enter => b'\n' as i64,
             Key::Backspace => 8,

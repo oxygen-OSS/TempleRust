@@ -2,7 +2,10 @@
 //!
 //! Booted by a hand-written two-stage BIOS bootloader, running in 64-bit
 //! long mode, ring 0, single address space. No libc, no allocator, no
-//! interrupts, no processes, no permissions.
+//! processes, no permissions. Interrupts are kept to a bare minimum: a
+//! remapped 8259 PIC with handlers for IRQ0 (PIT frame timer) plus IRQ1/IRQ12
+//! (PS/2 keyboard/mouse feeding ring buffers) lets the idle loop `hlt` for
+//! free CPU instead of spinning.
 
 #![no_std]
 #![no_main]
@@ -16,6 +19,7 @@ mod filemgr;
 mod font;
 mod hcapi;
 mod hcapps;
+mod int;
 mod keyboard;
 mod menu;
 mod mouse;
@@ -69,10 +73,16 @@ pub extern "C" fn _start() -> ! {
         core::ptr::write_bytes(start as *mut u8, 0, end - start);
     }
 
+    int::init(); // IDT + PIC + PS/2 rings; interrupt vectors only exist after this
+
     fb::init();
     hcapi::init_env();
     vfs::init();
     mouse::init();
+    // device bring-up above does synchronous controller exchanges; with
+    // IF on from here on, IRQ1/IRQ12 deliver into the rings instead
+    int::events_on();
+
     term::init();
     shell::run()
 }

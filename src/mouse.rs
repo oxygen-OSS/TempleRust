@@ -175,17 +175,11 @@ pub fn erase_cursor(px: usize, py: usize) {
 }
 
 pub fn poll() -> Option<MouseEvent> {
+    let data = match crate::int::mouse_pop() {
+        Some(b) => b,
+        None => return None,
+    };
     unsafe {
-        let status = inb(0x64);
-        if status & 1 == 0 {
-            return None;
-        }
-        if status & 0x20 == 0 {
-            // Not mouse data
-            return None;
-        }
-
-        let data = inb(0x60);
         let m = &mut *core::ptr::addr_of_mut!(MOUSE);
 
         if m.packet_idx == 0 && (data & 0x08) == 0 {

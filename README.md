@@ -176,7 +176,8 @@ Bare integer expressions are evaluated directly (e.g. `(2+3)*4;`).
 | `src/sound.rs` | PC speaker sound driver and music macro interpreter |
 | `src/vfs.rs` | contiguous RedSea-style virtual filesystem and docs |
 | `src/editor.rs` | full-screen DolDoc text editor (`Ed`) |
-| `src/keyboard.rs` | polled PS/2 keyboard driver with Ctrl, Alt, and F-keys |
+| `src/keyboard.rs` | PS/2 keyboard driver (IRQ-fed ring buffer, scancode set 1, Ctrl/Alt/F-keys) |
+| `src/int.rs` | IDT, remapped 8259 PIC, PS/2 IRQ rings, and the PIT one-shot that wakes the idle loop |
 | `src/shell.rs` | HolyC REPL, command dispatcher, and mini-games |
 | `src/expr.rs` | recursive-descent integer evaluator |
 | `src/hcapi.rs` | fixed-address kernel ABI at 0x68000 (`HC_*` functions + FB statics) |

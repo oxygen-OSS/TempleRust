@@ -1,7 +1,8 @@
-//! Polling PS/2 keyboard driver. Scancode set 1, US layout.
+//! Interrupt-driven PS/2 keyboard driver. Scancode set 1, US layout.
 //!
-//! We never enable interrupts, so the keyboard is read by watching the
-//! controller status port instead of using IRQ 1.
+//! IRQ 1 pushes raw bytes into `int`'s ring buffer; `poll()` consumes and
+//! translates them here. Keystrokes are timestamped by their delivery, so
+//! clicking a key never waits for the frame loop.
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Key {
@@ -56,14 +57,6 @@ pub fn is_alt() -> bool {
 #[allow(dead_code)]
 pub fn is_shift() -> bool {
     unsafe { (*st()).shift }
-}
-
-#[inline]
-unsafe fn inb(port: u16) -> u8 {
-    let v: u8;
-    core::arch::asm!("in al, dx", in("dx") port, out("al") v,
-                     options(nostack, preserves_flags));
-    v
 }
 
 /// (scancode, unshifted, shifted)
@@ -128,16 +121,8 @@ fn map(sc: u8, shift: bool) -> Option<u8> {
 }
 
 pub fn poll() -> Option<Key> {
+    let sc = crate::int::kb_pop()?;
     unsafe {
-        let status = inb(0x64);
-        if status & 1 == 0 {
-            return None;
-        }
-        if status & 0x20 != 0 {
-            return None; // mouse data, leave for mouse::poll
-        }
-        let sc = inb(0x60);
-
         let p = st();
 
         if sc == 0xe0 {

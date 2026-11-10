@@ -132,8 +132,10 @@ pub fn draw_panel_info() {
     if COLS > info.len() + 2 {
         draw_text_at_colored(COLS - info.len() - 1, MENU_ROW, info, YELLOW, menu_bg);
     }
-}/// One frame of the OS main loop: waits until the next frame slot so the loop
-/// runs at `FPS_CAP` overall, then records the achieved rate.
+}/// One frame of the OS main loop: idles until the next frame slot so the loop
+/// runs at `FPS_CAP` overall, then records the achieved rate. The CPU sleeps
+/// (`hlt`) in between, woken by the PIT deadline shot or any input; the OS
+/// runs with interrupts enabled, so this costs no CPU while idle.
 pub fn frame_wait() {
     let cap = fps_cap();
     let tsc_pm = crate::shell::tsc_per_ms();
@@ -142,17 +144,14 @@ pub fn frame_wait() {
         let t0 = *last_p;
         let interval = tsc_pm * 1000 / cap;
         if t0 != 0 && interval > 0 {
-            // only wait if the body of the previous frame finished early
-            if crate::shell::now().wrapping_sub(t0) < interval {
-                let due = t0.wrapping_add(interval);
-                while crate::shell::now() < due {
-                    core::hint::spin_loop();
-                }
+            let elapsed = crate::shell::now().wrapping_sub(t0);
+            if elapsed < interval {
+                wait_early_released(interval - elapsed);
             }
-            // record the achieved rate; skip giant gaps (time spent inside
-            // apps that have their own loops)
             let t = crate::shell::now();
             let dt = t.wrapping_sub(t0);
+            // record the achieved rate; skip giant gaps (time spent
+            // inside apps that have their own loops)
             if tsc_pm > 0 && dt > 0 && dt < tsc_pm * 2000 {
                 let inst = tsc_pm * 1000 / dt;
                 let mp = core::ptr::addr_of_mut!(MEASURED_FPS);
@@ -161,6 +160,32 @@ pub fn frame_wait() {
             }
         }
         *last_p = crate::shell::now();
+    }
+}
+
+/// Idle from now until `remaining` TSC ticks have passed (`hlt`-based) or a
+/// queued key/mouse packet arrives. IRQ0 is armed in PIT one-shot slices of
+/// at most 65535 ticks.
+fn wait_early_released(remaining_start: u64) {
+    if remaining_start == 0 {
+        return;
+    }
+    let tsc_pm = crate::shell::tsc_per_ms().max(1);
+    let t0 = unsafe { *core::ptr::addr_of!(LAST_FRAME) };
+    let mut remaining = remaining_start;
+    while remaining > 0 {
+        if crate::int::input_pending() {
+            return;
+        }
+        // remaining TSC ticks -> PIT ticks; slices capped at 65535
+        let pit_ticks = (remaining * crate::int::PIT_HZ / (tsc_pm * 1000)).min(65535) as u16;
+        if pit_ticks > 2 {
+            crate::int::pit_oneshot(pit_ticks);
+            core::hint::spin_loop(); // ordering fence into the idle wait
+            crate::int::idle();
+        }
+        let elapsed = crate::shell::now().wrapping_sub(t0);
+        remaining = remaining_start.saturating_sub(elapsed);
     }
 }
 pub const TITLE_ROW: usize = 1;

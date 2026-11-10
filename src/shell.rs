@@ -100,7 +100,8 @@ fn read_line(buf: &mut [u8]) -> usize {
     let mut last_blink = now();
     let mut last_info = now();
     loop {
-        if let Some(key) = keyboard::poll() {
+        // drain every key already queued before pacing
+        while let Some(key) = keyboard::poll() {
             match key {
                 Key::F(1) => {
                     term::newline();
@@ -221,9 +222,10 @@ fn read_line(buf: &mut [u8]) -> usize {
             term::draw_panel_info();
         }
 
-        // one frame of the OS main loop: paces the REPL at term::fps_cap()
+        // one frame of the OS main loop: paces the REPL at term::fps_cap().
+        // This sleep returns early for freshly queued input, so nothing is
+        // double-waited when keys arrive mid-frame.
         term::frame_wait();
-        core::hint::spin_loop();
     }
 }
 
