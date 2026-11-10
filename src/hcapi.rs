@@ -10,7 +10,7 @@ use crate::keyboard::{self, Key};
 use crate::term;
 use crate::{fb, sound};
 
-unsafe fn cstr(mut p: *const u8) -> &'static str {
+unsafe fn cstr(p: *const u8) -> &'static str {
     let mut n = 0usize;
     while *p.add(n) != 0 {
         n += 1;

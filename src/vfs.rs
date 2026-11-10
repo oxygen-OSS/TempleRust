@@ -124,6 +124,8 @@ $FG,LTGREEN$Key Differences from C:$FG,WHITE$\n\
     $FG,YELLOW$Dir;       $FG,DKGRAY$// equivalent to Dir();$FG,WHITE$\n\
 * Statements at the shell prompt are JIT-compiled directly:\n\
     $FG,YELLOW$Type(\"Charter.DD\");$FG,WHITE$\n\
+* App sources in apps/*.HC are AOT-compiled off-line (host tool hcc/)\n\
+  into flat .BIN blobs embedded in the kernel; run with Run Hello;.\n\
 * All commands use forward slashes for paths: $FG,YELLOW$C:/Doc$FG,WHITE$\n\
 * Dynamic typing and default function arguments are standard.\n\
 * Ring 0 access: in/out hardware instructions and direct memory access.\n",
@@ -156,6 +158,10 @@ $FG,LTGREEN$System & Diagnostics:$FG,WHITE$\n\
   $FG,YELLOW$Cls;            $FG,WHITE$Clear screen\n\
   $FG,YELLOW$Bench;          $FG,WHITE$Measure fill & text repaint FPS\n\
   $FG,YELLOW$Reboot; / Halt; $FG,WHITE$Reboot or halt system\n\n\
+$FG,LTGREEN$Compiled HolyC Apps (AOT):$FG,WHITE$\n\
+  $FG,YELLOW$Run;$FG,WHITE$            List AOT-compiled HolyC apps with sizes\n\
+  $FG,YELLOW$Run Name;$FG,WHITE$       Load and run a compiled app in ring 0 (Run Hello;)\n\
+  $FG,YELLOW$Name;$FG,WHITE$          Bare app name is shorthand (Hello; Plasma;)\n\n\
 $FG,LTGREEN$Demos & Games:$FG,WHITE$\n\
   $FG,YELLOW$Snake;          $FG,WHITE$Play classic snake game\n\
   $FG,YELLOW$Life;           $FG,WHITE$Conway's Game of Life simulation\n\

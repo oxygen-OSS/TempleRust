@@ -7,6 +7,11 @@ PC speaker audio, RedSea virtual filesystem, and an interactive text editor.
 
 ![screenshot](docs/screenshot.png)
 
+An AOT-compiled HolyC app running in ring 0 (`Run Plasma;` — straight to the
+1920×1080 framebuffer) and, below, what the shell prints afterwards:
+
+![plasma](docs/screenshot_plasma.png)
+
 No libc. No allocator. No preemptive scheduler. No processes. No permissions.
 No networking. Ring 0, single address space — just a screen, a keyboard, sound,
 and a HolyC REPL.
@@ -14,7 +19,8 @@ and a HolyC REPL.
 ## Build
 
 Requires a Rust toolchain (the host target is fine), `gcc` for the 16-bit
-bootloader, `ld.lld`, `objcopy`, and `dd`.
+bootloader, `ld.lld`, `objcopy`, `dd`, and `python3` (regenerates the embedded
+app manifest).
 
 ```sh
 ./build.sh
@@ -79,6 +85,34 @@ Launch with `Ed("filename");` to edit files in full-screen:
 - 16-color VGA palette with full 256-glyph CP437 font.
 - Themes: switch dynamically with `Theme("classic");` (TempleOS white canvas), `Theme("blue");`, or `Theme("dark");`.
 
+### 7. HolyC AOT Compiler (`hcc/`)
+TempleOS compiles HolyC sources with a JIT inside the OS; this prototype keeps
+the same flat-binary spirit but does the compilation **ahead of time on the
+host**, so no compiler has to live in the kernel:
+
+```sh
+./build.sh            # two-pass: harvest HC_* addresses, compile apps, embed
+hcc/target/release/hcc apps/Hello.HC build/apps/Hello.bin --api build/kernel_api.nm
+./build/blobhost build/apps/Hello.bin build/kernel_api.nm   # host-side test run
+```
+
+- `apps/*.HC` → flat `HC01` blobs (16-byte header: magic, entry offset, total
+  length, data offset; code, string literals and zero-init globals). No linker,
+  no relocations, no syscalls — code is generated for its load address.
+- Apps run in ring 0 exactly like TempleOS binaries: `Run Hello;` copies the
+  blob to 0x200000 and `CALL`s its `Main` straight into the kernel image.
+- Kernel services are fixed-address API symbols (`HC_Print`, `HC_Fill`,
+  `HC_Key`, framebuffer statics at 0x68000…) emitted in a `.hcapi` section and
+  resolved at compile time to plain `CALL rel32`s against the linked kernel.
+- `hcc/` is a single-file Rust compiler: lexer, recursive-descent parser and
+  an x86-64 code generator that value-tracks in rax with a push-pop discipline
+  that keeps every call site 16-byte aligned.
+- The generated language subset: `I64/U64/U8/U0` types (everything moves in
+  64-bit halves), local/global variables, `+ - * / % & | ^ << >>` and
+  comparison logic, `if/while/for`, internal function calls, pointer
+  loads/stores with `*p`, `p[i]` and compound assignment, `%d %x %X %c %s`
+  format strings, and bare string statements (implicit `Print`).
+
 ## Commands
 
 | Command | Description |
@@ -109,6 +143,9 @@ Launch with `Ed("filename");` to edit files in full-screen:
 | `Snake;` | play snake arcade game |
 | `Life;` | Conway's Game of Life simulation |
 | `Lines;` / `Graphics;` | 16-color geometric line demo |
+| `Run;` | list embedded AOT-compiled HolyC apps with sizes |
+| `Run Name;` | load a compiled HolyC app to 0x200000 and run it in ring 0 |
+| `Hello;` / `Plasma;` | bare app names are shorthand for `Run Name;` |
 | `Reboot;` | reboot the machine |
 | `Halt;` | stop the CPU |
 
@@ -140,5 +177,12 @@ Bare integer expressions are evaluated directly (e.g. `(2+3)*4;`).
 | `src/keyboard.rs` | polled PS/2 keyboard driver with Ctrl, Alt, and F-keys |
 | `src/shell.rs` | HolyC REPL, command dispatcher, and mini-games |
 | `src/expr.rs` | recursive-descent integer evaluator |
+| `src/hcapi.rs` | fixed-address kernel ABI at 0x68000 (`HC_*` functions + FB statics) |
+| `src/hcapps.rs` | blob registry and `Run` loader (`Run;` / `Run Name;`) |
+| `hcc/src/main.rs` | host-side AOT HolyC compiler (lexer/parser/x86-64 codegen) |
+| `apps/*.HC` | HolyC app sources, compiled to flat blobs at build time |
+| `tools/blobhost.c` | runs a compiled blob natively for host-side validation |
+| `build/kernel_api.nm` | generated `HC_*` symbol/address table from pass-1 link |
+| `build/hcapps_data.rs` | generated manifest embedding app blobs in the kernel |
 | `src/font.rs` | complete 256-glyph CP437 VGA font |
 | `tools/mkfont.py` | extracts 256 glyphs from `alt-8x16` console font |

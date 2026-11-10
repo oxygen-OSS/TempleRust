@@ -1209,7 +1209,11 @@ impl Cg {
                 self.xchg();
                 self.bs(&[0x48, 0x29, 0xC8]);
             }
-            "*" => self.bs(&[0x48, 0x0F, 0xAF, 0xC8]),
+            // imul r64, r/m64 (0F AF /r) takes its DESTINATION in the reg
+            // field, so reg=000/rm=001 = imul rax, rcx. 0xC8 would compute
+            // imul rcx, rax and leave the RHS in rax — every `*` then
+            // evaluated to its right operand.
+            "*" => self.bs(&[0x48, 0x0F, 0xAF, 0xC1]),
             "&" => self.bs(&[0x48, 0x21, 0xC8]),
             "|" => self.bs(&[0x48, 0x09, 0xC8]),
             "^" => self.bs(&[0x48, 0x31, 0xC8]),
