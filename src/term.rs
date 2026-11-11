@@ -366,14 +366,6 @@ pub fn mark_bg_dirty() {
     }
 }
 
-pub fn take_bg_dirty() -> bool {
-    unsafe {
-        let p = core::ptr::addr_of_mut!(BG_DIRTY);
-        let d = *p;
-        p.write(false);
-        d
-    }
-}
 
 static mut DESK: [[Cell; COLS]; ROWS] = [[EMPTY_BLUE; COLS]; ROWS];
 
@@ -681,13 +673,8 @@ pub fn repaint() {
 }
 
 /// Copy desktop buffer to screen cells (no framebuffer draw).
-pub fn copy_desktop_to_screen() {
-    unsafe {
-        let d = core::ptr::addr_of!(DESK);
-        let p = s();
-        (*p).cells = *d;
-    }
-}
+
+/// Blit window buffer into screen cells without drawing to framebuffer.
 
 /// Blit window buffer into screen cells without drawing to framebuffer.
 pub fn blit_cells_to_screen(buf: *const Cell, w: usize, h: usize, dx: isize, dy: isize) {
@@ -711,25 +698,6 @@ pub fn blit_cells_to_screen(buf: *const Cell, w: usize, h: usize, dx: isize, dy:
 
 /// Composite a window cell buffer onto the screen at (dx,dy) and render the
 /// covered cells. Off-screen cells are clipped.
-pub fn blit_cells(buf: *const Cell, w: usize, h: usize, dx: isize, dy: isize) {
-    unsafe {
-        for by in 0..h {
-            let sy = dy + by as isize;
-            if sy < 0 || sy >= ROWS as isize {
-                continue;
-            }
-            for bx in 0..w {
-                let sx = dx + bx as isize;
-                if sx < 0 || sx >= COLS as isize {
-                    continue;
-                }
-                let cell = *buf.add(by * w + bx);
-                (*s()).cells[sy as usize][sx as usize] = cell;
-                draw_cell(sx as usize, sy as usize);
-            }
-        }
-    }
-}
 
 pub fn set_fg(fg: u8) {
     unsafe {
@@ -972,26 +940,6 @@ pub fn print_hex64(v: u64) {
     }
 }
 
-pub fn cursor(on: bool) {
-    if in_target() {
-        return;
-    }
-    unsafe {
-        let p = s();
-        if (*p).cur_x != (*p).x || (*p).cur_y != (*p).y {
-            draw_cell((*p).cur_x, (*p).cur_y);
-            (*p).cur_x = (*p).x;
-            (*p).cur_y = (*p).y;
-        }
-        draw_cell((*p).x, (*p).y);
-        if on {
-            let cw = fb::cell_w();
-            let ch = fb::cell_h();
-            let cur_col = if (*p).bg == BLACK { WHITE } else { BLACK };
-            fb::fill_rect((*p).x * cw, (*p).y * ch + ch - 2, cw, 2, cur_col);
-        }
-    }
-}
 
 pub fn clear() {
     if in_target() {

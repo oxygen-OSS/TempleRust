@@ -42,9 +42,6 @@ pub fn win_buffer() -> *mut Cell {
     core::ptr::addr_of_mut!(BUF) as *mut Cell
 }
 
-pub fn run() {
-    crate::wm::open(crate::wm::Kind::Terminal);
-}
 
 fn fill_bg() {
     unsafe {

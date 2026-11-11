@@ -21,7 +21,6 @@ mod hcapi;
 mod hcapps;
 mod int;
 mod keyboard;
-mod menu;
 mod mouse;
 mod shell;
 mod sound;

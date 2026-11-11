@@ -56,7 +56,6 @@ static mut DRAG: bool = false;
 static mut GRAB_DX: isize = 0;
 static mut GRAB_DY: isize = 0;
 static mut PREV_LEFT: bool = false;
-static mut PREV_MENU: bool = false;
 static mut DESKTOP_MODE: bool = false;
 
 struct AppApi {
@@ -178,9 +177,6 @@ unsafe fn close(i: usize) {
 }
 
 /// True while any window is open.
-pub fn has_windows() -> bool {
-    unsafe { *core::ptr::addr_of!(N) > 0 }
-}
 
 /// Blocking compositor loop (non-desktop mode). Returns when all windows close.
 pub fn run() {
@@ -420,7 +416,6 @@ pub fn frame() {
             term::end_target();
             if !keep {
                 close(i);
-                n = *core::ptr::addr_of!(N);
                 break; // restart frame logic next tick (simple)
             } else {
                 let wp = &mut *wins.add(i);
