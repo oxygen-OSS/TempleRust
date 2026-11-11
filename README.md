@@ -26,14 +26,14 @@ app manifest).
 ./build.sh
 ```
 
-This produces `build/templeos.img`, a raw legacy-BIOS disk image.
+This produces `build/temple-rust.img`, a raw legacy-BIOS disk image.
 
 ## Run
 
 ### QEMU
 
 ```sh
-qemu-system-x86_64 -m 64 -drive format=raw,file=build/templeos.img -audiodev pa,id=snd0 -machine pcspk-audiodev=snd0
+qemu-system-x86_64 -m 64 -drive format=raw,file=build/temple-rust.img -audiodev pa,id=snd0 -machine pcspk-audiodev=snd0
 ```
 
 *(The `-audiodev` and `-machine pcspk-audiodev` flags enable the PC speaker sound under QEMU).*
@@ -41,7 +41,7 @@ qemu-system-x86_64 -m 64 -drive format=raw,file=build/templeos.img -audiodev pa,
 ### GNOME Boxes
 
 ```sh
-gnome-boxes build/templeos.img
+gnome-boxes build/temple-rust.img
 ```
 
 ## TempleRust Features
@@ -119,7 +119,7 @@ hcc/target/release/hcc apps/Hello.HC build/apps/Hello.bin --api build/kernel_api
 | --- | --- |
 | `FileMgr;` / `FM;` | dual-pane graphical file manager with mouse support |
 | `CalcGui;` / `Calc;` | interactive desktop calculator window |
-| `SysMon;` | system monitor dashboard and hardware meters |
+| `SysMon;` | live system monitor: uptime, FPS, IRQ counters, memory |
 | `Dir;` / `Dir("path");` | list directory contents with color-coded DolDoc links |
 | `Cd;` / `Cd("path");` | change working directory |
 | `Pwd;` | print current directory |
@@ -149,7 +149,7 @@ hcc/target/release/hcc apps/Hello.HC build/apps/Hello.bin --api build/kernel_api
 | `Run Name;` | load a compiled HolyC app to 0x200000 and run it in ring 0 |
 | `Hello;` / `Plasma;` | bare app names are shorthand for `Run Name;` |
 | `Reboot;` | reboot the machine |
-| `Halt;` | stop the CPU |
+| `Halt;` | power off via ACPI (S5) |
 
 Bare integer expressions are evaluated directly (e.g. `(2+3)*4;`).
 
@@ -158,6 +158,7 @@ Bare integer expressions are evaluated directly (e.g. `(2+3)*4;`).
 | Hotkey | Action |
 | --- | --- |
 | `<F1>` | Open master help and documentation |
+| `<Up>` / `<Down>` | Recall previous / next command from REPL history |
 | `<CTRL-T>` | Toggle between formatted DolDoc and raw markup |
 | `<CTRL-L>` | Clear screen |
 | `<CTRL-C>` | Cancel current input line |

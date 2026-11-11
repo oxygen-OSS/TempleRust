@@ -58,6 +58,11 @@ pub fn boot_info() -> &'static BootInfo {
     unsafe { &*(BOOT_INFO_ADDR as *const BootInfo) }
 }
 
+/// Bytes of .bss actually used by the kernel (for SysMon).
+pub fn bss_size() -> usize {
+    unsafe { &__bss_end as *const u8 as usize - &__bss_start as *const u8 as usize }
+}
+
 extern "C" {
     static __bss_start: u8;
     static __bss_end: u8;
@@ -73,6 +78,7 @@ pub extern "C" fn _start() -> ! {
         core::ptr::write_bytes(start as *mut u8, 0, end - start);
     }
 
+    shell::mark_boot();
     int::init(); // IDT + PIC + PS/2 rings; interrupt vectors only exist after this
 
     fb::init();

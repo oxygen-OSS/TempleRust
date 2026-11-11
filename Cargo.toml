@@ -1,5 +1,5 @@
 [package]
-name = "templeos-rs"
+name = "temple-rust"
 version = "0.1.0"
 edition = "2021"
 description = "A tiny TempleOS-inspired operating system in Rust"

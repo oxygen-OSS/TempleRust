@@ -10,6 +10,8 @@
 
 // --- port helpers ------------------------------------------------------------
 
+use core::sync::atomic::{AtomicU32, Ordering};
+
 #[inline]
 fn outb(port: u16, val: u8) {
     unsafe {
@@ -140,16 +142,19 @@ pub unsafe extern "C" fn irq_common(vec: usize) {
         let st = inb(0x64);
         if st & 1 != 0 && st & 0x20 == 0 {
             kb_push(inb(0x60));
+            KBD_BYTES.fetch_add(1, Ordering::Relaxed);
         }
         outb(0x20, 0x20); // EOI
     } else if vec == VEC_MOUSE {
         let st = inb(0x64);
         if st & 1 != 0 && st & 0x20 != 0 {
             mouse_push(inb(0x60));
+            MOUSE_BYTES.fetch_add(1, Ordering::Relaxed);
         }
         outb(0xa0, 0x20); // EOI slave + master
         outb(0x20, 0x20);
     } else {
+        PIT_TICKS.fetch_add(1, Ordering::Relaxed);
         outb(0x20, 0x20);
     }
 }
@@ -157,6 +162,12 @@ pub unsafe extern "C" fn irq_common(vec: usize) {
 // --- PS/2 ring buffers -------------------------------------------------------
 
 const RING: usize = 256;
+// IRQ activity counters, read by SysMon. Atomics: written from IRQ context,
+// read from the main loop — and `static mut` read-modify-write gets
+// miscompiled under optimization (counter never incremented).
+static PIT_TICKS: AtomicU32 = AtomicU32::new(0);
+static KBD_BYTES: AtomicU32 = AtomicU32::new(0);
+static MOUSE_BYTES: AtomicU32 = AtomicU32::new(0);
 static mut KBUF: [u8; RING] = [0; RING];
 static mut KHEAD: u8 = 0; // written by the IRQ only
 static mut KTAIL: u8 = 0; // written by the main loop only
@@ -219,6 +230,16 @@ pub fn kb_pending() -> bool {
     unsafe {
         *core::ptr::addr_of!(KHEAD) != *core::ptr::addr_of!(KTAIL)
     }
+}
+
+/// (PIT ticks, keyboard bytes, mouse bytes) since boot — live IRQ activity
+/// for SysMon.
+pub fn irq_stats() -> (u32, u32, u32) {
+    (
+        PIT_TICKS.load(Ordering::Relaxed),
+        KBD_BYTES.load(Ordering::Relaxed),
+        MOUSE_BYTES.load(Ordering::Relaxed),
+    )
 }
 
 /// Mouse byte availability, for callers that want to distinguish the two

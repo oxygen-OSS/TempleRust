@@ -138,7 +138,7 @@ $FG,LTGREEN$Key Differences from C:$FG,WHITE$\n\
 $FG,LTGREEN$Graphical Applications (GUIs):$FG,WHITE$\n\
   $FG,YELLOW$FileMgr;         $FG,WHITE$Dual-pane graphical file manager with mouse support\n\
   $FG,YELLOW$CalcGui;         $FG,WHITE$Interactive windowed desktop calculator\n\
-  $FG,YELLOW$SysMon;          $FG,WHITE$System monitor dashboard and hardware meters\n\
+  $FG,YELLOW$SysMon;          $FG,WHITE$Live system monitor: uptime, FPS, IRQ meters\n\
   $FG,YELLOW$Ed(\"file\");      $FG,WHITE$Interactive DolDoc full-screen text editor\n\n\
 $FG,LTGREEN$File Navigation:$FG,WHITE$\n\
   $FG,YELLOW$Dir;            $FG,WHITE$List directory contents with DolDoc links\n\
@@ -159,7 +159,9 @@ $FG,LTGREEN$System & Diagnostics:$FG,WHITE$\n\
   $FG,YELLOW$Fps(n);         $FG,WHITE$Set the main-loop frame-rate cap (e.g. Fps(30); Fps(60); Fps;)\n\
   $FG,YELLOW$Video(w x h);   $FG,WHITE$Change screen resolution at runtime (e.g. Video(1280x800);)\n\
   $FG,YELLOW$Bench;          $FG,WHITE$Measure fill & text repaint FPS\n\
-  $FG,YELLOW$Reboot; / Halt; $FG,WHITE$Reboot or halt system\n\n\
+  $FG,YELLOW$Reboot; / Halt; $FG,WHITE$Reboot, or power off via ACPI (S5)\n\n\
+$FG,LTGREEN$Command Line:$FG,WHITE$\n\
+  $FG,YELLOW$<Up>/<Down>     $FG,WHITE$Recall previous/next command from history\n\
 $FG,LTGREEN$Compiled HolyC Apps (AOT):$FG,WHITE$\n\
   $FG,YELLOW$Run;$FG,WHITE$            List AOT-compiled HolyC apps with sizes\n\
   $FG,YELLOW$Run Name;$FG,WHITE$       Load and run a compiled app in ring 0 (Run Hello;)\n\

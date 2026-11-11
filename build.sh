@@ -113,7 +113,7 @@ fi
 
 truncate -s $(( KSECT * 512 )) build/kernel.bin
 
-IMG=build/templeos.img
+IMG=build/temple-rust.img
 TOTAL=$(( (1 + S2SECT + KSECT) * 512 ))
 rm -f "$IMG"
 truncate -s "$TOTAL" "$IMG"

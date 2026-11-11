@@ -11,6 +11,53 @@ use crate::{fb, mouse};
 
 const MAX_LINE: usize = 120;
 
+// --- bash-style command history (Up/Down recall) -------------------------------
+
+const HIST_MAX: usize = 64;
+static mut HISTORY: [[u8; MAX_LINE]; HIST_MAX] = [[0; MAX_LINE]; HIST_MAX];
+static mut HIST_N: usize = 0;
+/// Index while browsing; -1 = live input.
+static mut HIST_VIEW: isize = -1;
+static mut DRAFT: [u8; MAX_LINE] = [0; MAX_LINE];
+
+unsafe fn hist_push(line: &[u8]) {
+    let n = *core::ptr::addr_of!(HIST_N);
+    if n > 0 {
+        // dedupe consecutive repeats
+        let prev = &(*core::ptr::addr_of!(HISTORY))[n - 1];
+        let pl = prev.iter().position(|&b| b == 0).unwrap_or(prev.len());
+        if pl == line.len() && prev[..pl] == *line {
+            return;
+        }
+    }
+    let h = core::ptr::addr_of_mut!(HISTORY);
+    let idx = if n < HIST_MAX {
+        core::ptr::addr_of_mut!(HIST_N).write(n + 1);
+        n
+    } else {
+        (*h).copy_within(1.., 0);
+        HIST_MAX - 1
+    };
+    let row = &mut (*h)[idx];
+    row[..line.len()].copy_from_slice(line);
+    if line.len() < MAX_LINE {
+        row[line.len()] = 0;
+    }
+}
+
+/// Erase the current input text and put `src` on the line instead.
+fn replace_line(buf: &mut [u8], len: &mut usize, src: &[u8]) {
+    for _ in 0..*len {
+        term::backspace();
+    }
+    let n = src.len().min(buf.len());
+    for i in 0..n {
+        buf[i] = src[i];
+        term::put_char(buf[i]);
+    }
+    *len = n;
+}
+
 pub fn run() -> ! {
     banner();
     let mut buf = [0u8; MAX_LINE];
@@ -44,6 +91,27 @@ pub fn now() -> u64 {
     unsafe { core::arch::x86_64::_rdtsc() }
 }
 
+// --- boot time ----------------------------------------------------------------
+
+static mut BOOT_TSC: u64 = 0;
+
+/// Stamp the TSC as early as possible in `_start` so SysMon can show uptime.
+pub fn mark_boot() {
+    unsafe { core::ptr::addr_of_mut!(BOOT_TSC).write(now()) }
+}
+
+pub fn uptime_ms() -> u64 {
+    let pm = tsc_per_ms();
+    if pm == 0 {
+        return 0;
+    }
+    let b = unsafe { *core::ptr::addr_of!(BOOT_TSC) };
+    if b == 0 {
+        return 0;
+    }
+    now().wrapping_sub(b) / pm
+}
+
 #[inline]
 fn inb(port: u16) -> u8 {
     let v: u8;
@@ -58,6 +126,14 @@ fn inb(port: u16) -> u8 {
 fn outb(port: u16, val: u8) {
     unsafe {
         core::arch::asm!("out dx, al", in("dx") port, in("al") val,
+                         options(nostack, preserves_flags));
+    }
+}
+
+#[inline]
+fn outw(port: u16, val: u16) {
+    unsafe {
+        core::arch::asm!("out dx, ax", in("dx") port, in("ax") val,
                          options(nostack, preserves_flags));
     }
 }
@@ -164,8 +240,71 @@ fn read_line(buf: &mut [u8]) -> usize {
                         term::backspace();
                     }
                 }
+                Key::Up => unsafe {
+                    let n = *core::ptr::addr_of!(HIST_N);
+                    if n > 0 {
+                        let view = *core::ptr::addr_of!(HIST_VIEW);
+                        let newv = if view < 0 {
+                            // entering history: stash the unsent line
+                            let d: &mut [u8; MAX_LINE] =
+                                &mut *core::ptr::addr_of_mut!(DRAFT);
+                            d[..len].copy_from_slice(&buf[..len]);
+                            if len < MAX_LINE {
+                                d[len] = 0;
+                            }
+                            (n - 1) as isize
+                        } else if view > 0 {
+                            view - 1
+                        } else {
+                            view
+                        };
+                        if newv != view {
+                            core::ptr::addr_of_mut!(HIST_VIEW).write(newv);
+                            let row = &(*core::ptr::addr_of!(HISTORY))[newv as usize];
+                            let l2 = row
+                                .iter()
+                                .position(|&b| b == 0)
+                                .unwrap_or(row.len())
+                                .min(buf.len());
+                            replace_line(buf, &mut len, &row[..l2]);
+                        }
+                    }
+                },
+                Key::Down => unsafe {
+                    let view = *core::ptr::addr_of!(HIST_VIEW);
+                    if view >= 0 {
+                        let n = *core::ptr::addr_of!(HIST_N);
+                        let next = view + 1;
+                        if (next as usize) < n {
+                            core::ptr::addr_of_mut!(HIST_VIEW).write(next);
+                            let row = &(*core::ptr::addr_of!(HISTORY))[next as usize];
+                            let l2 = row
+                                .iter()
+                                .position(|&b| b == 0)
+                                .unwrap_or(row.len())
+                                .min(buf.len());
+                            replace_line(buf, &mut len, &row[..l2]);
+                        } else {
+                            // past the newest entry: back to the unsent draft
+                            core::ptr::addr_of_mut!(HIST_VIEW).write(-1);
+                            let d = &*core::ptr::addr_of!(DRAFT);
+                            let l2 = d
+                                .iter()
+                                .position(|&b| b == 0)
+                                .unwrap_or(d.len())
+                                .min(buf.len());
+                            replace_line(buf, &mut len, &d[..l2]);
+                        }
+                    }
+                },
                 Key::Enter => {
                     term::newline();
+                    unsafe {
+                        core::ptr::addr_of_mut!(HIST_VIEW).write(-1);
+                        if len > 0 {
+                            hist_push(&buf[..len]);
+                        }
+                    }
                     return len;
                 }
                 _ => {}
@@ -1273,7 +1412,19 @@ fn reboot() -> ! {
 
 fn halt() -> ! {
     term::set_fg(term::DARK_GRAY);
-    term::print_str("CPU halted. Power off the machine.\n");
+    term::print_str("Powering off (ACPI S5)...\n");
+    unsafe {
+        // PM1a_CNT: SLP_EN (bit 13) + SLP_TYP = S5. The well-known fixed
+        // PM base addresses used by the common PC emulators:
+        outw(0x0604, 0x2000); // QEMU (piix4, PM base 0x600)
+        outw(0x0B004, 0x2000); // Bochs / older QEMU
+        outw(0x4004, 0x2000); // VirtualBox
+        // if we are still here (no ACPI emulator), fall back to a halted CPU
+        for _ in 0..20_000_000 {
+            core::hint::spin_loop();
+        }
+        core::arch::asm!("cli", "hlt", options(nomem, nostack));
+    }
     loop {
         unsafe {
             core::arch::asm!("cli", "hlt", options(nomem, nostack));

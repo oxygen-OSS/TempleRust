@@ -62,8 +62,12 @@ pub fn fps() -> u64 {
     }
     let cutoff = crate::shell::now().wrapping_sub(pm * 1000);
     unsafe {
-        let arr = core::ptr::addr_of!(FRAME_TS) as *const [u64; 128];
         let n = *core::ptr::addr_of!(FRAME_N);
+        if n == 0 {
+            // never measured yet: don't display 0 during the first second
+            return fps_cap();
+        }
+        let arr = core::ptr::addr_of!(FRAME_TS) as *const [u64; 128];
         let p = *core::ptr::addr_of!(FRAME_P);
         let mut count = 0u64;
         for i in 0..n {
@@ -181,6 +185,15 @@ pub fn draw_panel_info() {
 /// the driver, and letting continuous packet streams break pacing would turn
 /// the main loop into a spin lock at packet rate. Keys do — keystrokes are
 /// far rarer and users expect them immediately.
+static mut FRAME_BUSY: u32 = 100;
+
+/// Percentage of the last paced frame spent doing work instead of sleeping.
+/// ~0 = the loop idles in `hlt`; 100 = it runs flat out (input flood, busy
+/// app). Shown by SysMon.
+pub fn frame_busy() -> u64 {
+    unsafe { *core::ptr::addr_of!(FRAME_BUSY) as u64 }
+}
+
 pub fn frame_wait() {
     let cap = fps_cap();
     let tsc_pm = crate::shell::tsc_per_ms();
@@ -188,17 +201,25 @@ pub fn frame_wait() {
         let last_p = core::ptr::addr_of_mut!(LAST_FRAME);
         let t0 = *last_p;
         let interval = tsc_pm * 1000 / cap;
+        let t_wake0 = crate::shell::now();
         if t0 != 0 && interval > 0 {
             let elapsed = crate::shell::now().wrapping_sub(t0);
             if elapsed < interval {
                 wait_early_released(interval - elapsed);
             }
         }
+        let waited = crate::shell::now().wrapping_sub(t_wake0);
         let t = crate::shell::now();
+        let dt_total = t.wrapping_sub(t0);
         // only stamp meaningful frames; skip giant gaps (time spent inside
         // apps that have their own loops) entirely
-        if t0 != 0 && t.wrapping_sub(t0) < tsc_pm * 2000 {
+        if t0 != 0 && dt_total > 0 && dt_total < tsc_pm * 2000 {
             record_frame(t);
+        }
+        // loop-load metric from frames where we actually got to sleep
+        if waited > 0 && dt_total > 0 && dt_total < tsc_pm * 2000 {
+            let busy = ((dt_total - waited) * 100 / dt_total) as u32;
+            core::ptr::addr_of_mut!(FRAME_BUSY).write(busy.min(100));
         }
         *last_p = t;
     }
