@@ -174,7 +174,7 @@ $FG,LTGREEN$Demos & Games:$FG,WHITE$\n\
         "C:/Home",
         "Notes.DD",
         "$FG,YELLOW$$TX+CX,\"=== USER SCRATCHPAD ===\"$\n\n\
-$FG,LTBLUE$Welcome to TempleOS/Rust!$FG,WHITE$\n\
+$FG,LTBLUE$Welcome to TempleRust!$FG,WHITE$\n\
 Use $FG,YELLOW$Ed(\"Notes.DD\");$FG,WHITE$ to edit this document in real time.\n\
 Press $FG,YELLOW$<ESC>$FG,WHITE$ inside the editor to save and exit.\n\n\
 $MA,\"Open Help\",LM=\"Help;\"$\n",
@@ -183,7 +183,7 @@ $MA,\"Open Help\",LM=\"Help;\"$\n",
     add_file(
         "C:/Apps",
         "Snake.HC",
-        "// Snake Arcade Game for TempleOS/Rust\n\
+        "// Snake Arcade Game for TempleRust\n\
 // Controls: Arrow keys to steer, 'Q' to quit.\n\
 U0 SnakeMain()\n\
 {\n\

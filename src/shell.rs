@@ -26,7 +26,7 @@ pub fn run() -> ! {
 
 fn banner() {
     doldoc::print_doldoc(
-        "$FG,YELLOW$$TX+CX,\"=== TEMPLEOS / RUST ===\"$\n\
+        "$FG,YELLOW$$TX+CX,\"=== TEMPLE-RUST ===\"$\n\
 $FG,CYAN$$TX+CX,\"========================\"$\n\n\
 $FG,WHITE$A ring-0, single-address-space toy OS with TempleOS DolDoc & GUIs.\n\
 $FG,LTCYAN$Top menu is interactive: click $FG,YELLOW$[Menu]$FG,LTCYAN$ or press $FG,YELLOW$<F2>$FG,LTCYAN$ for drop-down tools.$FG,WHITE$\n\n\
@@ -728,7 +728,7 @@ fn cmd_help() {
 
 fn about() {
     doldoc::print_doldoc(
-        "$FG,RED$$TX+CX,\"TempleOS/Rust 0.1\"$\n\
+        "$FG,RED$$TX+CX,\"TempleRust 0.1\"$\n\
 $FG,DKGRAY$$TX+CX,\"================================\"$\n\n\
 $FG,WHITE$A TempleOS-inspired operating system written in Rust.\n\
 Boots from BIOS into 64-bit long mode with ring-0 privileges,\n\
@@ -745,7 +745,7 @@ $FG,YELLOW$Features:$FG,WHITE$\n\
 }
 
 fn ver() {
-    term::print_str("TempleOS/Rust ");
+    term::print_str("TempleRust ");
     term::print_str(env!("CARGO_PKG_VERSION"));
     term::print_str("\nx86_64-unknown-linux-gnu, no_std, no_main, ring 0\n");
 }

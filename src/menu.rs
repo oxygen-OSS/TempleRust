@@ -62,7 +62,7 @@ pub const HELP_ITEMS: &[MenuItem] = &[
     MenuItem { label: "Master Help (<F1>);", cmd: "Help;" },
     MenuItem { label: "Memory Report (MemRep);", cmd: "MemRep;" },
     MenuItem { label: "CPU Report (CpuRep);", cmd: "CpuRep;" },
-    MenuItem { label: "About TempleOS/Rust;", cmd: "About;" },
+    MenuItem { label: "About TempleRust;", cmd: "About;" },
 ];
 
 static mut ACTIVE_MENU: MenuId = MenuId::None;

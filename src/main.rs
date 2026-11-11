@@ -1,4 +1,4 @@
-//! TempleOS/Rust -- a tiny TempleOS-inspired operating system.
+//! TempleRust -- a tiny TempleOS-inspired operating system.
 //!
 //! Booted by a hand-written two-stage BIOS bootloader, running in 64-bit
 //! long mode, ring 0, single address space. No libc, no allocator, no

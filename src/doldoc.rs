@@ -1,4 +1,4 @@
-//! DolDoc document and inline markup engine for TempleOS/Rust.
+//! DolDoc document and inline markup engine for TempleRust.
 //!
 //! Implements the dollar-sign command parser: $FG,col$, $BG,col$, $TX+CX,"..."$,
 //! $UL,1/0$, $IV,1/0$, $MA,"...",LM="..."$, $$ escapes, and raw mode toggle (Ctrl-T).
