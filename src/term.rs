@@ -34,8 +34,49 @@ pub const MENU_ROW: usize = 0;
 /// Frame-rate limit of the OS main loop. Default: 60 FPS (was an unplanned
 /// spin-wait before). Runtime-changeable with the `Fps(n);` command.
 static mut FPS_CAP: u64 = 60;
-/// Achieved frame rate of the main loop, exponentially averaged.
-static mut MEASURED_FPS: u64 = 60;
+/// FPS measurement: sliding window of recent frame stamps. Reporting raw
+/// per-frame TSC deltas spikes to absurd values whenever input wakes the
+/// wait early, so the displayed number is "frames completed in the last
+/// second", exactly what a frame meter means.
+static mut FRAME_TS: [u64; 128] = [0; 128];
+static mut FRAME_N: usize = 0;
+static mut FRAME_P: usize = 0;
+
+fn record_frame(ts: u64) {
+    unsafe {
+        let p = core::ptr::addr_of_mut!(FRAME_P);
+        let arr = core::ptr::addr_of_mut!(FRAME_TS);
+        let n = core::ptr::addr_of_mut!(FRAME_N);
+        (*arr)[*p] = ts;
+        *p = (*p + 1) % (*arr).len();
+        if *n < (*arr).len() {
+            *n += 1;
+        }
+    }
+}
+
+pub fn fps() -> u64 {
+    let pm = crate::shell::tsc_per_ms();
+    if pm == 0 {
+        return 0;
+    }
+    let cutoff = crate::shell::now().wrapping_sub(pm * 1000);
+    unsafe {
+        let arr = core::ptr::addr_of!(FRAME_TS) as *const [u64; 128];
+        let n = *core::ptr::addr_of!(FRAME_N);
+        let p = *core::ptr::addr_of!(FRAME_P);
+        let mut count = 0u64;
+        for i in 0..n {
+            if (*arr)[(p + (*arr).len() - 1 - i) % (*arr).len()].wrapping_sub(cutoff)
+                < (1u64 << 63)
+            {
+                count += 1;
+            }
+        }
+        count
+    }
+}
+
 /// TSC stamp of the end of the previous frame.
 static mut LAST_FRAME: u64 = 0;
 
@@ -43,18 +84,16 @@ pub fn fps_cap() -> u64 {
     unsafe { *core::ptr::addr_of!(FPS_CAP) }
 }
 
-pub fn fps() -> u64 {
-    unsafe { *core::ptr::addr_of!(MEASURED_FPS) }
-}
-
 /// Set the frame-rate cap (clamped to 1..120). `Fps(n);` shell command.
 pub fn set_fps_cap(n: u64) {
     let cap = n.clamp(1, 120);
     unsafe {
         core::ptr::addr_of_mut!(FPS_CAP).write(cap);
-        // re-measure from a clean slate so the EMA doesn't take ~seconds
+        // re-measure from a clean slate so the meter doesn't take ~seconds
         // to converge onto the new rate
-        core::ptr::addr_of_mut!(MEASURED_FPS).write(cap);
+        core::ptr::addr_of_mut!(FRAME_TS).write([0; 128]);
+        core::ptr::addr_of_mut!(FRAME_N).write(0);
+        core::ptr::addr_of_mut!(FRAME_P).write(0);
         core::ptr::addr_of_mut!(LAST_FRAME).write(0);
     }
 }
@@ -133,9 +172,15 @@ pub fn draw_panel_info() {
         draw_text_at_colored(COLS - info.len() - 1, MENU_ROW, info, YELLOW, menu_bg);
     }
 }/// One frame of the OS main loop: idles until the next frame slot so the loop
-/// runs at `FPS_CAP` overall, then records the achieved rate. The CPU sleeps
-/// (`hlt`) in between, woken by the PIT deadline shot or any input; the OS
-/// runs with interrupts enabled, so this costs no CPU while idle.
+/// runs at `FPS_CAP` overall, then stamps the frame for the FPS meter. The
+/// CPU sleeps (`hlt`) in between, woken by the PIT deadline shot, an input
+/// packet, or a freshly queued key; the OS runs with interrupts enabled, so
+/// this costs no CPU while idle.
+///
+/// Mouse traffic does NOT cut the wait short: it is coalesced per frame by
+/// the driver, and letting continuous packet streams break pacing would turn
+/// the main loop into a spin lock at packet rate. Keys do — keystrokes are
+/// far rarer and users expect them immediately.
 pub fn frame_wait() {
     let cap = fps_cap();
     let tsc_pm = crate::shell::tsc_per_ms();
@@ -148,24 +193,20 @@ pub fn frame_wait() {
             if elapsed < interval {
                 wait_early_released(interval - elapsed);
             }
-            let t = crate::shell::now();
-            let dt = t.wrapping_sub(t0);
-            // record the achieved rate; skip giant gaps (time spent
-            // inside apps that have their own loops)
-            if tsc_pm > 0 && dt > 0 && dt < tsc_pm * 2000 {
-                let inst = tsc_pm * 1000 / dt;
-                let mp = core::ptr::addr_of_mut!(MEASURED_FPS);
-                let old = *mp;
-                *mp = if old == 0 { inst } else { (old * 3 + inst) / 4 };
-            }
         }
-        *last_p = crate::shell::now();
+        let t = crate::shell::now();
+        // only stamp meaningful frames; skip giant gaps (time spent inside
+        // apps that have their own loops) entirely
+        if t0 != 0 && t.wrapping_sub(t0) < tsc_pm * 2000 {
+            record_frame(t);
+        }
+        *last_p = t;
     }
 }
 
 /// Idle from now until `remaining` TSC ticks have passed (`hlt`-based) or a
-/// queued key/mouse packet arrives. IRQ0 is armed in PIT one-shot slices of
-/// at most 65535 ticks.
+/// *keystroke* is queued. IRQ0 is armed in PIT one-shot slices of at most
+/// 65535 ticks.
 fn wait_early_released(remaining_start: u64) {
     if remaining_start == 0 {
         return;
@@ -174,7 +215,7 @@ fn wait_early_released(remaining_start: u64) {
     let t0 = unsafe { *core::ptr::addr_of!(LAST_FRAME) };
     let mut remaining = remaining_start;
     while remaining > 0 {
-        if crate::int::input_pending() {
+        if crate::int::kb_pending() {
             return;
         }
         // remaining TSC ticks -> PIT ticks; slices capped at 65535

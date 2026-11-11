@@ -174,24 +174,33 @@ pub fn erase_cursor(px: usize, py: usize) {
     }
 }
 
+/// Poll the mouse: drains *every* packet currently queued in the IRQ ring,
+/// coalesces the movement into the final position, and redraws the cursor
+/// once. A fast-moving mouse streams many packets per frame; without this
+/// coalescing each packet would wake the main loop and look like thousands
+/// of "frames".
 pub fn poll() -> Option<MouseEvent> {
-    let data = match crate::int::mouse_pop() {
-        Some(b) => b,
-        None => return None,
-    };
     unsafe {
         let m = &mut *core::ptr::addr_of_mut!(MOUSE);
+        let old_x = m.x;
+        let old_y = m.y;
+        let mut any_packet = false;
+        let mut left = false;
+        let mut right = false;
 
-        if m.packet_idx == 0 && (data & 0x08) == 0 {
-            // Out of sync
-            return None;
-        }
+        while let Some(data) = crate::int::mouse_pop() {
+            if m.packet_idx == 0 && (data & 0x08) == 0 {
+                // Out of sync
+                continue;
+            }
 
-        m.packet[m.packet_idx] = data;
-        m.packet_idx += 1;
-
-        if m.packet_idx == 3 {
+            m.packet[m.packet_idx] = data;
+            m.packet_idx += 1;
+            if m.packet_idx != 3 {
+                continue;
+            }
             m.packet_idx = 0;
+            any_packet = true;
             let flags = m.packet[0];
             let mut dx = m.packet[1] as isize;
             let mut dy = m.packet[2] as isize;
@@ -203,9 +212,6 @@ pub fn poll() -> Option<MouseEvent> {
                 dy -= 256;
             }
 
-            let old_x = m.x;
-            let old_y = m.y;
-
             m.x += dx;
             m.y -= dy; // PS/2 Y goes up, screen goes down
 
@@ -213,23 +219,32 @@ pub fn poll() -> Option<MouseEvent> {
             let h = fb::height() as isize;
             m.x = m.x.clamp(0, w.saturating_sub(CURSOR_W as isize));
             m.y = m.y.clamp(0, h.saturating_sub(CURSOR_H as isize));
-
-            m.left = (flags & 0x01) != 0;
-            m.right = (flags & 0x02) != 0;
-
-            if m.cursor_visible && (old_x != m.x || old_y != m.y) {
-                erase_cursor(old_x as usize, old_y as usize);
-                draw_cursor();
+            if (flags & 0x01) != 0 {
+                left = true;
             }
-
-            return Some(MouseEvent {
-                x: m.x as usize,
-                y: m.y as usize,
-                left: m.left,
-                right: m.right,
-            });
+            if (flags & 0x02) != 0 {
+                right = true;
+            }
         }
-        None
+
+        if !any_packet {
+            return None;
+        }
+        m.left = left;
+        m.right = right;
+        let moved = m.x != old_x || m.y != old_y;
+
+        if moved && m.cursor_visible {
+            erase_cursor(old_x.max(0) as usize, old_y.max(0) as usize);
+            draw_cursor();
+        }
+
+        Some(MouseEvent {
+            x: m.x as usize,
+            y: m.y as usize,
+            left,
+            right,
+        })
     }
 }
 

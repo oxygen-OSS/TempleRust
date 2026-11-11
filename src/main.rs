@@ -84,6 +84,9 @@ pub extern "C" fn _start() -> ! {
     int::events_on();
 
     term::init();
+    // term::init() repaints every cell, which paints over the boot-time
+    // cursor bitmap; draw it again so the pointer is visible immediately
+    mouse::draw_cursor();
     shell::run()
 }
 

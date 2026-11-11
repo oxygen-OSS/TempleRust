@@ -221,14 +221,13 @@ pub fn kb_pending() -> bool {
     }
 }
 
+/// Mouse byte availability, for callers that want to distinguish the two
+/// rings (the frame wait only early-releases on keyboard).
+#[allow(dead_code)]
 pub fn mouse_pending() -> bool {
     unsafe {
         *core::ptr::addr_of!(MHEAD) != *core::ptr::addr_of!(MTAIL)
     }
-}
-
-pub fn input_pending() -> bool {
-    kb_pending() || mouse_pending()
 }
 
 // --- PIT (channel 0, one-shot) -----------------------------------------------
