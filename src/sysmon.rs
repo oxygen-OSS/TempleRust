@@ -264,7 +264,7 @@ fn draw_chrome() {
     term::draw_text_at_colored(SM_LEFT + 3, SM_TOP + 9, "Interrupts (since boot)", term::YELLOW, bg);
     term::draw_text_at_colored(SM_LEFT + 5, SM_TOP + 10, "PIT ticks (IRQ0):", dim, bg);
     term::draw_text_at_colored(SM_LEFT + 5, SM_TOP + 11, "Key bytes (IRQ1):", dim, bg);
-    term::draw_text_at_colored(SM_LEFT + 5, SM_TOP + 12, "Mouse bytes (IRQ12):", dim, bg);
+    term::draw_text_at_colored(SM_LEFT + 5, SM_TOP + 12, "Mouse bytes (polled):", dim, bg);
 
     // Section 3: video & memory
     term::draw_text_at_colored(SM_LEFT + 3, SM_TOP + 13, "Video & Memory", term::YELLOW, bg);

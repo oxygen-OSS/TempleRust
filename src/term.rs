@@ -134,10 +134,10 @@ fn push_num(buf: &mut [u8], i: &mut usize, mut n: u64) {
     }
 }
 
-/// Build "CPU <n>  FPS <rate>" from live data into `buf`, return the slice.
+/// Build "CPUs <n>  FPS <rate>" from live data into `buf`, return the slice.
 fn info_str(buf: &mut [u8]) -> &str {
     let mut i = 0usize;
-    for &c in b"CPU " {
+    for &c in b"CPUs " {
         if i < buf.len() {
             buf[i] = c;
             i += 1;
@@ -151,7 +151,7 @@ fn info_str(buf: &mut [u8]) -> &str {
         }
     }
     push_num(buf, &mut i, fps());
-    core::str::from_utf8(&buf[..i]).unwrap_or("CPU 1  FPS 60")
+    core::str::from_utf8(&buf[..i]).unwrap_or("CPUs 1  FPS 60")
 }
 
 fn menu_colors() -> (u8, u8) {

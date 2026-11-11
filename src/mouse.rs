@@ -180,6 +180,8 @@ pub fn erase_cursor(px: usize, py: usize) {
 /// coalescing each packet would wake the main loop and look like thousands
 /// of "frames".
 pub fn poll() -> Option<MouseEvent> {
+    // IRQ12 is masked: drain whatever the 8042 buffered this frame first.
+    crate::int::mouse_drain();
     unsafe {
         let m = &mut *core::ptr::addr_of_mut!(MOUSE);
         let old_x = m.x;

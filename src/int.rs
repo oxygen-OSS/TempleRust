@@ -149,7 +149,6 @@ pub unsafe extern "C" fn irq_common(vec: usize) {
         let st = inb(0x64);
         if st & 1 != 0 && st & 0x20 != 0 {
             mouse_push(inb(0x60));
-            MOUSE_BYTES.fetch_add(1, Ordering::Relaxed);
         }
         outb(0xa0, 0x20); // EOI slave + master
         outb(0x20, 0x20);
@@ -184,6 +183,7 @@ unsafe fn kb_push(b: u8) {
 }
 
 unsafe fn mouse_push(b: u8) {
+    MOUSE_BYTES.fetch_add(1, Ordering::Relaxed);
     let (h, t) = (*core::ptr::addr_of!(MHEAD), *core::ptr::addr_of!(MTAIL));
     if h.wrapping_sub(t) != (RING - 1) as u8 {
         MBUF[h as usize % RING] = b;
@@ -206,6 +206,32 @@ pub fn kb_pop() -> Option<u8> {
         };
         core::arch::asm!("push {}; popfq", in(reg) flags, options(nomem, nostack));
         out
+    }
+}
+
+/// Frame-polled mouse drain. IRQ12 is masked; each `mouse::poll()` (once per
+/// frame) pulls every byte waiting at the 8042 straight into the ring under
+/// `cli` so no IRQ handler can race us on the shared output buffer.
+pub fn mouse_drain() {
+    unsafe {
+        let mut flags: u64;
+        core::arch::asm!("pushfq; cli; pop {}", out(reg) flags, options(nomem, nostack));
+        // cap the work per frame; coalescing means dropped packets are
+        // harmless (the cursor just moves straight to the newer position)
+        for _ in 0..128 {
+            let st = inb(0x64);
+            if st & 1 == 0 {
+                break;
+            }
+            let b = inb(0x60);
+            if st & 0x20 != 0 {
+                mouse_push(b);
+            } else {
+                // rare: a keyboard byte arrived between IRQs — route it right
+                kb_push(b);
+            }
+        }
+        core::arch::asm!("push {}; popfq", in(reg) flags, options(nomem, nostack));
     }
 }
 
@@ -348,7 +374,10 @@ pub fn init() {
         io_wait();
         // master: unmask PIT (0), keyboard (1) and the cascade (2)
         outb(0x21, 0xf8);
-        // slave: unmask IRQ12 (mouse)
-        outb(0xa1, 0xef);
+        // slave: all masked — the mouse is drained by frame-polled code
+        // (mouse::poll -> int::mouse_drain). A streaming host mouse can
+        // emit hundreds of packets/second; per-byte IRQs would flood the
+        // CPU for zero gain since packets coalesce per frame anyway.
+        outb(0xa1, 0xff);
     }
 }
