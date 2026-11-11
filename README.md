@@ -1,4 +1,4 @@
-# TempleOS/Rust
+# TempleRust
 
 A tiny TempleOS-inspired operating system prototype written in Rust. It boots
 from a hand-written BIOS bootloader into 64-bit long mode and drops you into an
@@ -44,7 +44,7 @@ qemu-system-x86_64 -m 64 -drive format=raw,file=build/templeos.img -audiodev pa,
 gnome-boxes build/templeos.img
 ```
 
-## TempleOS Features
+## TempleRust Features
 
 ### 1. DolDoc Hypertext Markup Engine
 All text output is rendered through a DolDoc engine supporting dollar-sign commands:
