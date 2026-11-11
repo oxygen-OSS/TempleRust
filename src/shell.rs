@@ -9,7 +9,7 @@ use crate::term;
 use crate::vfs;
 use crate::{fb, mouse};
 
-const MAX_LINE: usize = 120;
+pub(crate) const MAX_LINE: usize = 120;
 
 // --- bash-style command history (Up/Down recall) -------------------------------
 
@@ -20,7 +20,39 @@ static mut HIST_N: usize = 0;
 static mut HIST_VIEW: isize = -1;
 static mut DRAFT: [u8; MAX_LINE] = [0; MAX_LINE];
 
-unsafe fn hist_push(line: &[u8]) {
+pub(crate) unsafe fn hist_count() -> usize {
+    *core::ptr::addr_of!(HIST_N)
+}
+
+pub(crate) unsafe fn hist_get(i: usize) -> &'static [u8] {
+    let row = &(*core::ptr::addr_of!(HISTORY))[i];
+    let l = row.iter().position(|&b| b == 0).unwrap_or(row.len());
+    &row[..l]
+}
+
+pub(crate) unsafe fn hist_view() -> isize {
+    *core::ptr::addr_of!(HIST_VIEW)
+}
+
+pub(crate) unsafe fn set_hist_view(v: isize) {
+    core::ptr::addr_of_mut!(HIST_VIEW).write(v);
+}
+
+pub(crate) unsafe fn draft_set(src: &[u8]) {
+    let d = &mut *core::ptr::addr_of_mut!(DRAFT);
+    d[..src.len()].copy_from_slice(src);
+    if src.len() < MAX_LINE {
+        d[src.len()] = 0;
+    }
+}
+
+pub(crate) unsafe fn draft_get() -> &'static [u8] {
+    let d = &*core::ptr::addr_of!(DRAFT);
+    let l = d.iter().position(|&b| b == 0).unwrap_or(d.len());
+    &d[..l]
+}
+
+pub(crate) unsafe fn hist_push(line: &[u8]) {
     let n = *core::ptr::addr_of!(HIST_N);
     if n > 0 {
         // dedupe consecutive repeats
@@ -46,7 +78,7 @@ unsafe fn hist_push(line: &[u8]) {
 }
 
 /// Erase the current input text and put `src` on the line instead.
-fn replace_line(buf: &mut [u8], len: &mut usize, src: &[u8]) {
+pub(crate) fn replace_line(buf: &mut [u8], len: &mut usize, src: &[u8]) {
     for _ in 0..*len {
         term::backspace();
     }
@@ -60,14 +92,17 @@ fn replace_line(buf: &mut [u8], len: &mut usize, src: &[u8]) {
 
 pub fn run() -> ! {
     banner();
-    let mut buf = [0u8; MAX_LINE];
+    let mut repl = Repl::new();
     loop {
-        term::set_fg(term::YELLOW);
-        term::print_str("> ");
-        term::set_fg(term::WHITE);
-        term::cursor(true);
-        let len = read_line(&mut buf);
-        execute(&buf[..len]);
+        if repl.step() {
+            let cmd = repl.cmd;
+            let n = repl.cmd_len;
+            execute(&cmd[..n]);
+            // the command may have run fullscreen apps or WM windows; make
+            // sure the desktop background is freshly painted underneath
+            term::mark_bg_dirty();
+        }
+        term::frame_wait();
     }
 }
 
@@ -170,26 +205,67 @@ pub fn tsc_per_ms() -> u64 {
     }
 }
 
-fn read_line(buf: &mut [u8]) -> usize {
-    let mut len = 0usize;
-    let mut on = true;
-    let mut last_blink = now();
-    let mut last_info = now();
-    loop {
+// --- REPL as desktop -----------------------------------------------------------
+//
+// The REPL is now a per-frame component of the desktop: it processes at most
+// one frame of input per call, and the window compositor runs whenever any
+// window is open (see wm.rs). When a window is open it owns the keyboard and
+// mouse, so this code does not run.
+
+struct Repl {
+    buf: [u8; MAX_LINE],
+    len: usize,
+    on: bool,
+    last_blink: u64,
+    last_info: u64,
+    want_prompt: bool,
+    cmd: [u8; MAX_LINE],
+    cmd_len: usize,
+}
+
+impl Repl {
+    fn new() -> Repl {
+        Repl {
+            buf: [0; MAX_LINE],
+            len: 0,
+            on: true,
+            last_blink: now(),
+            last_info: 0,
+            want_prompt: true,
+            cmd: [0; MAX_LINE],
+            cmd_len: 0,
+        }
+    }
+
+    /// print prompt + current input line (after clear/help/etc.)
+    fn reprint(&mut self) {
+        term::set_fg(term::BLUE);
+        term::print_str(vfs::cwd_str());
+        term::set_fg(term::RED);
+        term::print_str("> ");
+        term::set_fg(term::theme_fg());
+        for &b in &self.buf[..self.len] {
+            term::put_char(b);
+        }
+    }
+
+    /// one frame of line editing; returns true when a command was entered
+    fn step(&mut self) -> bool {
+        if self.want_prompt {
+            self.want_prompt = false;
+            term::set_fg(term::YELLOW);
+            term::print_str("> ");
+            term::set_fg(term::WHITE);
+            term::cursor(true);
+        }
+
         // drain every key already queued before pacing
         while let Some(key) = keyboard::poll() {
             match key {
                 Key::F(1) => {
                     term::newline();
                     cmd_help();
-                    term::set_fg(term::BLUE);
-                    term::print_str(vfs::cwd_str());
-                    term::set_fg(term::RED);
-                    term::print_str("> ");
-                    term::set_fg(term::theme_fg());
-                    for &b in &buf[..len] {
-                        term::put_char(b);
-                    }
+                    self.reprint();
                 }
                 Key::F(2) => {
                     crate::menu::toggle_menu(crate::menu::MenuId::File);
@@ -203,40 +279,27 @@ fn read_line(buf: &mut [u8]) -> usize {
                     } else {
                         "[DolDoc: Formatted Mode]\n"
                     });
-                    term::set_fg(term::BLUE);
-                    term::print_str(vfs::cwd_str());
-                    term::set_fg(term::RED);
-                    term::print_str("> ");
-                    term::set_fg(term::theme_fg());
-                    for &b in &buf[..len] {
-                        term::put_char(b);
-                    }
+                    self.reprint();
                 }
                 Key::Ctrl(b'l') => {
                     term::clear();
-                    term::set_fg(term::BLUE);
-                    term::print_str(vfs::cwd_str());
-                    term::set_fg(term::RED);
-                    term::print_str("> ");
-                    term::set_fg(term::theme_fg());
-                    for &b in &buf[..len] {
-                        term::put_char(b);
-                    }
+                    self.reprint();
                 }
                 Key::Ctrl(b'c') => {
                     term::print_str("^C\n");
-                    return 0;
+                    self.len = 0;
+                    self.want_prompt = true;
                 }
                 Key::Char(c) => {
-                    if len < buf.len() {
-                        buf[len] = c;
-                        len += 1;
+                    if self.len < self.buf.len() {
+                        self.buf[self.len] = c;
+                        self.len += 1;
                         term::put_char(c);
                     }
                 }
                 Key::Backspace => {
-                    if len > 0 {
-                        len -= 1;
+                    if self.len > 0 {
+                        self.len -= 1;
                         term::backspace();
                     }
                 }
@@ -248,9 +311,9 @@ fn read_line(buf: &mut [u8]) -> usize {
                             // entering history: stash the unsent line
                             let d: &mut [u8; MAX_LINE] =
                                 &mut *core::ptr::addr_of_mut!(DRAFT);
-                            d[..len].copy_from_slice(&buf[..len]);
-                            if len < MAX_LINE {
-                                d[len] = 0;
+                            d[..self.len].copy_from_slice(&self.buf[..self.len]);
+                            if self.len < MAX_LINE {
+                                d[self.len] = 0;
                             }
                             (n - 1) as isize
                         } else if view > 0 {
@@ -265,8 +328,8 @@ fn read_line(buf: &mut [u8]) -> usize {
                                 .iter()
                                 .position(|&b| b == 0)
                                 .unwrap_or(row.len())
-                                .min(buf.len());
-                            replace_line(buf, &mut len, &row[..l2]);
+                                .min(self.buf.len());
+                            replace_line(&mut self.buf, &mut self.len, &row[..l2]);
                         }
                     }
                 },
@@ -282,8 +345,8 @@ fn read_line(buf: &mut [u8]) -> usize {
                                 .iter()
                                 .position(|&b| b == 0)
                                 .unwrap_or(row.len())
-                                .min(buf.len());
-                            replace_line(buf, &mut len, &row[..l2]);
+                                .min(self.buf.len());
+                            replace_line(&mut self.buf, &mut self.len, &row[..l2]);
                         } else {
                             // past the newest entry: back to the unsent draft
                             core::ptr::addr_of_mut!(HIST_VIEW).write(-1);
@@ -292,8 +355,8 @@ fn read_line(buf: &mut [u8]) -> usize {
                                 .iter()
                                 .position(|&b| b == 0)
                                 .unwrap_or(d.len())
-                                .min(buf.len());
-                            replace_line(buf, &mut len, &d[..l2]);
+                                .min(self.buf.len());
+                            replace_line(&mut self.buf, &mut self.len, &d[..l2]);
                         }
                     }
                 },
@@ -301,17 +364,22 @@ fn read_line(buf: &mut [u8]) -> usize {
                     term::newline();
                     unsafe {
                         core::ptr::addr_of_mut!(HIST_VIEW).write(-1);
-                        if len > 0 {
-                            hist_push(&buf[..len]);
+                        if self.len > 0 {
+                            hist_push(&self.buf[..self.len]);
                         }
                     }
-                    return len;
+                    self.cmd[..self.len].copy_from_slice(&self.buf[..self.len]);
+                    self.cmd_len = self.len;
+                    self.cmd[self.len] = 0;
+                    self.len = 0;
+                    self.want_prompt = true;
+                    return true;
                 }
                 _ => {}
             }
-            on = true;
+            self.on = true;
             term::cursor(true);
-            last_blink = now();
+            self.last_blink = now();
         }
 
         if let Some(mev) = crate::mouse::poll() {
@@ -324,47 +392,36 @@ fn read_line(buf: &mut [u8]) -> usize {
                 if row == 1 && col >= term::COLS.saturating_sub(6) {
                     // Clicked [X] close/clear box
                     term::clear();
-                    term::set_fg(term::BLUE);
-                    term::print_str(vfs::cwd_str());
-                    term::set_fg(term::RED);
-                    term::print_str("> ");
-                    term::set_fg(term::theme_fg());
-                    for &b in &buf[..len] {
-                        term::put_char(b);
-                    }
+                    self.reprint();
                 } else if let Some(cmd) = crate::menu::handle_click(col, row) {
                     term::newline();
                     term::set_fg(term::YELLOW);
-                    term::print_str(cmd);
+                    term::print_str(&cmd);
                     term::newline();
                     term::set_fg(term::theme_fg());
-                    execute(cmd.as_bytes());
-                    term::set_fg(term::BLUE);
-                    term::print_str(vfs::cwd_str());
-                    term::set_fg(term::RED);
-                    term::print_str("> ");
-                    term::set_fg(term::theme_fg());
-                    len = 0;
+                    self.cmd[..cmd.len()].copy_from_slice(cmd.as_bytes());
+                    self.cmd_len = cmd.len();
+                    self.cmd[cmd.len()] = 0;
+                    self.len = 0;
+                    self.want_prompt = true;
+                    return true;
                 }
             }
         }
 
         let t = now();
-        if t.wrapping_sub(last_blink) > tsc_per_ms() * 450 {
-            last_blink = t;
-            on = !on;
-            term::cursor(on);
+        if t.wrapping_sub(self.last_blink) > tsc_per_ms() * 450 {
+            self.last_blink = t;
+            self.on = !self.on;
+            term::cursor(self.on);
         }
         // refresh the menu-bar info line once a second (real CPU/FPS data)
-        if t.wrapping_sub(last_info) > tsc_per_ms() * 1000 {
-            last_info = t;
+        if t.wrapping_sub(self.last_info) > tsc_per_ms() * 1000 {
+            self.last_info = t;
             term::draw_panel_info();
         }
 
-        // one frame of the OS main loop: paces the REPL at term::fps_cap().
-        // This sleep returns early for freshly queued input, so nothing is
-        // double-waited when keys arrive mid-frame.
-        term::frame_wait();
+        false
     }
 }
 
@@ -397,7 +454,7 @@ fn unquote(s: &str) -> &str {
     s
 }
 
-fn execute(line: &[u8]) {
+pub fn execute(line: &[u8]) {
     let s = match core::str::from_utf8(line) {
         Ok(s) => s.trim(),
         Err(_) => {

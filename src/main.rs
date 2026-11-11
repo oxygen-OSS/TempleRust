@@ -27,8 +27,10 @@ mod shell;
 mod sound;
 mod sysmon;
 mod term;
+mod terminal;
 mod vfs;
 mod vga;
+mod wm;
 
 use core::ffi::{c_char, c_int, c_void};
 use core::panic::PanicInfo;
@@ -91,10 +93,7 @@ pub extern "C" fn _start() -> ! {
     int::events_on();
 
     term::init();
-    // term::init() repaints every cell, which paints over the boot-time
-    // cursor bitmap; draw it again so the pointer is visible immediately
-    mouse::draw_cursor();
-    shell::run()
+    wm::desktop_loop();
 }
 
 // --- freestanding runtime bits ---------------------------------------------

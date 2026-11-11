@@ -75,15 +75,25 @@ pub fn close_menu() {
     unsafe {
         ACTIVE_MENU = MenuId::None;
     }
-    term::repaint();
-    term::draw_chrome();
+    // don't force a full screen repaint here — the WM compositor will reblit
+    // windows over the area the dropdown occupied. In non-WM contexts (plain
+    // REPL with no windows) mark the background dirty so the caller/loop can
+    // refresh; also do a targeted repaint of the affected body rows.
+    term::mark_bg_dirty();
+    if !crate::wm::has_windows() {
+        term::repaint();
+        term::draw_chrome();
+    }
 }
 
 pub fn open_menu(id: MenuId) {
     unsafe {
         ACTIVE_MENU = id;
     }
-    draw_active_dropdown();
+    if !crate::wm::has_windows() {
+        draw_active_dropdown();
+    }
+    // when windows are up, wm::frame draws the dropdown after compositing
 }
 
 pub fn toggle_menu(id: MenuId) {

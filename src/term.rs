@@ -289,6 +289,108 @@ struct Screen {
 struct SyncCell<T>(UnsafeCell<T>);
 unsafe impl<T> Sync for SyncCell<T> {}
 
+// --- window-target mode (used by the WM's per-window cell buffers) -----------
+// When active, put_at_colored writes into a private cell buffer instead of
+// the screen grid, and does not touch the framebuffer. The WM composites
+// buffers onto the screen itself (term::blit_cells).
+static mut TGT: *mut Cell = core::ptr::null_mut();
+static mut TGT_W: usize = 0;
+static mut TGT_H: usize = 0;
+static mut TGT_CX: usize = 0;
+static mut TGT_CY: usize = 0;
+static mut TGT_FG: u8 = WHITE;
+static mut TGT_BG: u8 = BLACK;
+static mut MODERN_UI: bool = false;
+
+pub fn set_modern_ui(v: bool) {
+    unsafe {
+        core::ptr::addr_of_mut!(MODERN_UI).write(v);
+    }
+}
+
+pub fn is_modern_ui() -> bool {
+    unsafe { *core::ptr::addr_of!(MODERN_UI) }
+}
+/// so the compositor knows the desktop background changed and needs a repaint.
+static mut BG_DIRTY: bool = false;
+
+pub fn begin_target(buf: *mut Cell, w: usize, h: usize) {
+    unsafe {
+        core::ptr::addr_of_mut!(TGT).write(buf);
+        core::ptr::addr_of_mut!(TGT_W).write(w);
+        core::ptr::addr_of_mut!(TGT_H).write(h);
+        // default: continue at top-left with theme colors; caller can override
+        core::ptr::addr_of_mut!(TGT_CX).write(0);
+        core::ptr::addr_of_mut!(TGT_CY).write(0);
+        core::ptr::addr_of_mut!(TGT_FG).write(theme_fg());
+        core::ptr::addr_of_mut!(TGT_BG).write(theme_bg());
+    }
+}
+
+pub fn end_target() {
+    unsafe {
+        core::ptr::addr_of_mut!(TGT).write(core::ptr::null_mut());
+    }
+}
+
+pub fn in_target() -> bool {
+    unsafe { !core::ptr::addr_of!(TGT).read().is_null() }
+}
+
+pub fn tgt_cursor() -> (usize, usize) {
+    unsafe {
+        (
+            *core::ptr::addr_of!(TGT_CX),
+            *core::ptr::addr_of!(TGT_CY),
+        )
+    }
+}
+
+pub fn set_tgt_cursor(x: usize, y: usize) {
+    unsafe {
+        core::ptr::addr_of_mut!(TGT_CX).write(x);
+        core::ptr::addr_of_mut!(TGT_CY).write(y);
+    }
+}
+
+pub fn set_tgt_colors(fg: u8, bg: u8) {
+    unsafe {
+        core::ptr::addr_of_mut!(TGT_FG).write(fg);
+        core::ptr::addr_of_mut!(TGT_BG).write(bg);
+    }
+}
+
+pub fn mark_bg_dirty() {
+    unsafe {
+        core::ptr::addr_of_mut!(BG_DIRTY).write(true);
+    }
+}
+
+pub fn take_bg_dirty() -> bool {
+    unsafe {
+        let p = core::ptr::addr_of_mut!(BG_DIRTY);
+        let d = *p;
+        p.write(false);
+        d
+    }
+}
+
+static mut DESK: [[Cell; COLS]; ROWS] = [[EMPTY_BLUE; COLS]; ROWS];
+
+/// Snapshot current screen as the desktop background (call when desktop is clean).
+pub fn snapshot_desktop() {
+    unsafe {
+        core::ptr::addr_of_mut!(DESK).write((*s()).cells);
+    }
+}
+
+/// Restore screen cells from the desktop snapshot (no draw).
+pub fn restore_desktop() {
+    unsafe {
+        (*s()).cells = *core::ptr::addr_of!(DESK);
+    }
+}
+
 static SCREEN: SyncCell<Screen> = SyncCell(UnsafeCell::new(Screen {
     cells: [[EMPTY_BLUE; COLS]; ROWS],
     x: 0,
@@ -350,6 +452,9 @@ pub fn theme() -> Theme {
 }
 
 pub fn theme_fg() -> u8 {
+    if is_modern_ui() {
+        return LIGHT_GRAY;
+    }
     unsafe {
         match (*s()).theme {
             Theme::Classic => BLACK,
@@ -359,6 +464,9 @@ pub fn theme_fg() -> u8 {
 }
 
 pub fn theme_bg() -> u8 {
+    if is_modern_ui() {
+        return BLACK;
+    }
     unsafe {
         match (*s()).theme {
             Theme::Classic => WHITE,
@@ -403,12 +511,27 @@ pub unsafe fn draw_cell(x: usize, y: usize) {
 }
 
 pub fn put_at_colored(x: usize, y: usize, ch: u8, fg: u8, bg: u8) {
+    unsafe {
+        let t = core::ptr::addr_of!(TGT).read();
+        if !t.is_null() {
+            // window-buffer mode: no immediate framebuffer rendering
+            let (w, h) = (
+                core::ptr::addr_of!(TGT_W).read(),
+                core::ptr::addr_of!(TGT_H).read(),
+            );
+            if x < w && y < h {
+                *t.add(y * w + x) = Cell { ch, fg, bg };
+            }
+            return;
+        }
+    }
     if x >= COLS || y >= ROWS {
         return;
     }
     unsafe {
         (*s()).cells[y][x] = Cell { ch, fg, bg };
         draw_cell(x, y);
+        core::ptr::addr_of_mut!(BG_DIRTY).write(true);
     }
 }
 
@@ -432,6 +555,9 @@ pub fn draw_text_at(x: usize, y: usize, text: &str, fg: u8) {
 }
 
 pub fn draw_chrome() {
+    if is_modern_ui() {
+        return;
+    }
     let th = theme();
     let (menu_bg, menu_fg) = match th {
         Theme::Classic => (BROWN, WHITE),
@@ -495,6 +621,9 @@ pub fn draw_chrome() {
 }
 
 pub fn status_bar() {
+    if is_modern_ui() {
+        return;
+    }
     let th = theme();
     let (stat_bg, stat_fg) = match th {
         Theme::Classic => (LIGHT_GRAY, BLACK),
@@ -551,20 +680,90 @@ pub fn repaint() {
     }
 }
 
+/// Copy desktop buffer to screen cells (no framebuffer draw).
+pub fn copy_desktop_to_screen() {
+    unsafe {
+        let d = core::ptr::addr_of!(DESK);
+        let p = s();
+        (*p).cells = *d;
+    }
+}
+
+/// Blit window buffer into screen cells without drawing to framebuffer.
+pub fn blit_cells_to_screen(buf: *const Cell, w: usize, h: usize, dx: isize, dy: isize) {
+    unsafe {
+        let p = s();
+        for by in 0..h {
+            let sy = dy + by as isize;
+            if sy < 0 || sy >= ROWS as isize {
+                continue;
+            }
+            for bx in 0..w {
+                let sx = dx + bx as isize;
+                if sx < 0 || sx >= COLS as isize {
+                    continue;
+                }
+                (*p).cells[sy as usize][sx as usize] = *buf.add(by * w + bx);
+            }
+        }
+    }
+}
+
+/// Composite a window cell buffer onto the screen at (dx,dy) and render the
+/// covered cells. Off-screen cells are clipped.
+pub fn blit_cells(buf: *const Cell, w: usize, h: usize, dx: isize, dy: isize) {
+    unsafe {
+        for by in 0..h {
+            let sy = dy + by as isize;
+            if sy < 0 || sy >= ROWS as isize {
+                continue;
+            }
+            for bx in 0..w {
+                let sx = dx + bx as isize;
+                if sx < 0 || sx >= COLS as isize {
+                    continue;
+                }
+                let cell = *buf.add(by * w + bx);
+                (*s()).cells[sy as usize][sx as usize] = cell;
+                draw_cell(sx as usize, sy as usize);
+            }
+        }
+    }
+}
+
 pub fn set_fg(fg: u8) {
     unsafe {
-        (*s()).fg = fg;
+        if in_target() {
+            core::ptr::addr_of_mut!(TGT_FG).write(fg);
+        } else {
+            (*s()).fg = fg;
+        }
     }
 }
 
 pub fn set_bg(bg: u8) {
     unsafe {
-        (*s()).bg = bg;
+        if in_target() {
+            core::ptr::addr_of_mut!(TGT_BG).write(bg);
+        } else {
+            (*s()).bg = bg;
+        }
     }
 }
 
 pub fn newline() {
     unsafe {
+        if in_target() {
+            let h = *core::ptr::addr_of!(TGT_H);
+            core::ptr::addr_of_mut!(TGT_CX).write(0);
+            let cy = *core::ptr::addr_of!(TGT_CY);
+            if cy + 1 >= h {
+                tgt_scroll();
+            } else {
+                core::ptr::addr_of_mut!(TGT_CY).write(cy + 1);
+            }
+            return;
+        }
         let p = s();
         (*p).x = 0;
         if (*p).y >= BODY_BOTTOM {
@@ -575,8 +774,36 @@ pub fn newline() {
     }
 }
 
+unsafe fn tgt_scroll() {
+    let t = core::ptr::addr_of!(TGT).read();
+    let (w, h) = (
+        *core::ptr::addr_of!(TGT_W),
+        *core::ptr::addr_of!(TGT_H),
+    );
+    let fg = *core::ptr::addr_of!(TGT_FG);
+    let bg = *core::ptr::addr_of!(TGT_BG);
+    if w == 0 || h == 0 {
+        return;
+    }
+    for y in 0..h.saturating_sub(1) {
+        for x in 0..w {
+            *t.add(y * w + x) = *t.add((y + 1) * w + x);
+        }
+    }
+    let last = h - 1;
+    for x in 0..w {
+        *t.add(last * w + x) = Cell { ch: b' ', fg, bg };
+    }
+    core::ptr::addr_of_mut!(TGT_CY).write(last);
+    core::ptr::addr_of_mut!(TGT_CX).write(0);
+}
+
 pub fn scroll() {
     unsafe {
+        if in_target() {
+            tgt_scroll();
+            return;
+        }
         let p = s();
         let def_bg = (*p).bg;
         let def_fg = (*p).fg;
@@ -600,6 +827,22 @@ pub fn scroll() {
 
 pub fn backspace() {
     unsafe {
+        if in_target() {
+            let cx = *core::ptr::addr_of!(TGT_CX);
+            if cx > 0 {
+                let nx = cx - 1;
+                core::ptr::addr_of_mut!(TGT_CX).write(nx);
+                let t = core::ptr::addr_of!(TGT).read();
+                let w = *core::ptr::addr_of!(TGT_W);
+                let cy = *core::ptr::addr_of!(TGT_CY);
+                let fg = *core::ptr::addr_of!(TGT_FG);
+                let bg = *core::ptr::addr_of!(TGT_BG);
+                if w > 0 {
+                    *t.add(cy * w + nx) = Cell { ch: b' ', fg, bg };
+                }
+            }
+            return;
+        }
         let p = s();
         if (*p).x > 0 {
             (*p).x -= 1;
@@ -615,6 +858,38 @@ pub fn backspace() {
 
 pub fn put_char_colored(c: u8, fg: u8, bg: u8) {
     unsafe {
+        if in_target() {
+            core::ptr::addr_of_mut!(TGT_FG).write(fg);
+            core::ptr::addr_of_mut!(TGT_BG).write(bg);
+            let w = *core::ptr::addr_of!(TGT_W);
+            let h = *core::ptr::addr_of!(TGT_H);
+            if w == 0 || h == 0 {
+                return;
+            }
+            match c {
+                b'\n' => newline(),
+                b'\r' => core::ptr::addr_of_mut!(TGT_CX).write(0),
+                b'\t' => {
+                    for _ in 0..4 {
+                        put_char_colored(b' ', fg, bg);
+                    }
+                }
+                8 => backspace(),
+                _ => {
+                    let cx = *core::ptr::addr_of!(TGT_CX);
+                    let cy = *core::ptr::addr_of!(TGT_CY);
+                    let t = core::ptr::addr_of!(TGT).read();
+                    *t.add(cy * w + cx) = Cell { ch: c, fg, bg };
+                    let nx = cx + 1;
+                    if nx >= w {
+                        newline();
+                    } else {
+                        core::ptr::addr_of_mut!(TGT_CX).write(nx);
+                    }
+                }
+            }
+            return;
+        }
         match c {
             b'\n' => newline(),
             b'\r' => (*s()).x = 0,
@@ -628,6 +903,7 @@ pub fn put_char_colored(c: u8, fg: u8, bg: u8) {
                 let p = s();
                 (*p).cells[(*p).y][(*p).x] = Cell { ch: c, fg, bg };
                 draw_cell((*p).x, (*p).y);
+                core::ptr::addr_of_mut!(BG_DIRTY).write(true);
                 (*p).x += 1;
                 if (*p).x >= COLS {
                     newline();
@@ -638,7 +914,16 @@ pub fn put_char_colored(c: u8, fg: u8, bg: u8) {
 }
 
 pub fn put_char(c: u8) {
-    let (fg, bg) = unsafe { ((*s()).fg, (*s()).bg) };
+    let (fg, bg) = unsafe {
+        if in_target() {
+            (
+                *core::ptr::addr_of!(TGT_FG),
+                *core::ptr::addr_of!(TGT_BG),
+            )
+        } else {
+            ((*s()).fg, (*s()).bg)
+        }
+    };
     put_char_colored(c, fg, bg);
 }
 
@@ -673,11 +958,7 @@ pub fn print_hex32(v: u32) {
     print_str("0x");
     for shift in (0..8).rev() {
         let nib = ((v >> (shift * 4)) & 0xf) as u8;
-        let c = if nib < 10 {
-            b'0' + nib
-        } else {
-            b'a' + nib - 10
-        };
+        let c = if nib < 10 { b'0' + nib } else { b'a' + nib - 10 };
         put_char(c);
     }
 }
@@ -686,16 +967,15 @@ pub fn print_hex64(v: u64) {
     print_str("0x");
     for shift in (0..16).rev() {
         let nib = ((v >> (shift * 4)) & 0xf) as u8;
-        let c = if nib < 10 {
-            b'0' + nib
-        } else {
-            b'a' + nib - 10
-        };
+        let c = if nib < 10 { b'0' + nib } else { b'a' + nib - 10 };
         put_char(c);
     }
 }
 
 pub fn cursor(on: bool) {
+    if in_target() {
+        return;
+    }
     unsafe {
         let p = s();
         if (*p).cur_x != (*p).x || (*p).cur_y != (*p).y {
@@ -714,6 +994,40 @@ pub fn cursor(on: bool) {
 }
 
 pub fn clear() {
+    if in_target() {
+        // window-buffer mode: only clear the private buffer
+        unsafe {
+            let t = core::ptr::addr_of!(TGT).read();
+            let (w, h) = (
+                core::ptr::addr_of!(TGT_W).read(),
+                core::ptr::addr_of!(TGT_H).read(),
+            );
+            let bg = if is_modern_ui() { BLACK } else { theme_bg() };
+            let fg = if is_modern_ui() { LIGHT_GRAY } else { theme_fg() };
+            for i in 0..w * h {
+                *t.add(i) = Cell { ch: b' ', fg, bg };
+            }
+        }
+        return;
+    }
+    if is_modern_ui() {
+        unsafe {
+            let p = s();
+            for y in 0..ROWS {
+                for x in 0..COLS {
+                    (*p).cells[y][x] = Cell { ch: b' ', fg: LIGHT_GRAY, bg: BLACK };
+                }
+            }
+            (*p).x = 0;
+            (*p).y = 0;
+            (*p).fg = LIGHT_GRAY;
+            (*p).bg = BLACK;
+            (*p).cur_x = 0;
+            (*p).cur_y = 0;
+        }
+        repaint();
+        return;
+    }
     unsafe {
         let p = s();
         let bg = theme_bg();
@@ -729,6 +1043,7 @@ pub fn clear() {
         (*p).bg = bg;
         (*p).cur_x = 0;
         (*p).cur_y = BODY_TOP;
+        core::ptr::addr_of_mut!(BG_DIRTY).write(true);
     }
     draw_chrome();
     repaint();

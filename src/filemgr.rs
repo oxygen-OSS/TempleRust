@@ -1,159 +1,211 @@
 //! TempleOS-style Graphical File Manager (FileMgr).
 //!
-//! A windowed dual-pane file browser with mouse support, directory navigation,
-//! and inline file viewing and editing.
+//! A dual-pane file browser with mouse support, directory navigation, and
+//! inline file viewing and editing — a movable WM window.
 
 use crate::editor;
 use crate::keyboard::{self, Key};
-use crate::mouse;
-use crate::term;
+use crate::term::{self, Cell};
 use crate::vfs;
 
-const FM_TOP: usize = 2;
-const FM_BOTTOM: usize = 27;
-const FM_LEFT: usize = 2;
-const FM_RIGHT: usize = 77;
-const SPLIT_X: usize = 26;
+const FM_TOP: usize = 0;
+const FM_BOTTOM: usize = 25;
+const FM_LEFT: usize = 0;
+const FM_RIGHT: usize = 75;
+const SPLIT_X: usize = 24;
+const WIN_W: usize = 76;
+const WIN_H: usize = 27; // box rows 0..=25, hint row below at 26
 
 const DIRS: &[&str] = &["C:/Home", "C:/Doc", "C:/Apps", "C:/Demo", "C:/"];
 
+// --- WM window interface ------------------------------------------------------
+
+static mut BUF: [Cell; WIN_W * WIN_H] = [Cell {
+    ch: b' ',
+    fg: 0,
+    bg: 0,
+}; WIN_W * WIN_H];
+
+struct State {
+    dir_idx: usize,
+    file_idx: usize,
+    in_files: bool,
+}
+
+static mut STATE: State = State {
+    dir_idx: 0,
+    file_idx: 0,
+    in_files: false,
+};
+
+pub fn win_size() -> (usize, usize) {
+    (WIN_W, WIN_H)
+}
+
+pub fn win_buffer() -> *mut Cell {
+    core::ptr::addr_of_mut!(BUF) as *mut Cell
+}
+
+/// Legacy entry point (menu / REPL command): open as a WM window.
 pub fn run() {
-    let mut cur_dir_idx = 0usize;
-    let mut cur_file_idx = 0usize;
-    let mut in_files = false;
+    crate::wm::open(crate::wm::Kind::FileMgr);
+}
 
-    term::clear();
+pub fn win_open() {
+    unsafe {
+        let s = core::ptr::addr_of_mut!(STATE);
+        (*s).dir_idx = 0;
+        (*s).file_idx = 0;
+        (*s).in_files = false;
+    }
     draw_chrome();
-    draw_panes(cur_dir_idx, cur_file_idx, in_files);
+    unsafe {
+        let s = &*core::ptr::addr_of!(STATE);
+        draw_panes(s.dir_idx, s.file_idx, s.in_files);
+    }
+}
 
-    loop {
-        if let Some(key) = keyboard::poll() {
-            match key {
-                Key::Esc | Key::Char(b'q') | Key::Char(b'Q') => break,
-                Key::Tab => {
-                    in_files = !in_files;
-                    draw_panes(cur_dir_idx, cur_file_idx, in_files);
-                }
-                Key::Up => {
-                    if !in_files {
-                        if cur_dir_idx > 0 {
-                            cur_dir_idx -= 1;
-                            cur_file_idx = 0;
-                            draw_panes(cur_dir_idx, cur_file_idx, in_files);
-                        }
-                    } else if cur_file_idx > 0 {
-                        cur_file_idx -= 1;
-                        draw_panes(cur_dir_idx, cur_file_idx, in_files);
+/// One frame: process input, draw the client into the window buffer.
+/// Returns true when the content changed (needs a reblit).
+pub fn win_frame(
+    focused: bool,
+    key: Option<Key>,
+    click: Option<(usize, usize)>,
+) -> bool {
+    unsafe {
+        let sp = core::ptr::addr_of_mut!(STATE);
+        let mut changed = false;
+
+        // --- keyboard ---
+        if focused {
+            if let Some(key) = key {
+                match key {
+                    Key::Esc | Key::Char(b'q') | Key::Char(b'Q') => return false, // close
+                    Key::Tab => {
+                        (*sp).in_files = !(*sp).in_files;
+                        changed = true;
                     }
-                }
-                Key::Down => {
-                    if !in_files {
-                        if cur_dir_idx + 1 < DIRS.len() {
-                            cur_dir_idx += 1;
-                            cur_file_idx = 0;
-                            draw_panes(cur_dir_idx, cur_file_idx, in_files);
-                        }
-                    } else {
-                        let count = files_in_dir_count(DIRS[cur_dir_idx]);
-                        if cur_file_idx + 1 < count {
-                            cur_file_idx += 1;
-                            draw_panes(cur_dir_idx, cur_file_idx, in_files);
+                    Key::Up => {
+                        if !(*sp).in_files {
+                            if (*sp).dir_idx > 0 {
+                                (*sp).dir_idx -= 1;
+                                (*sp).file_idx = 0;
+                                changed = true;
+                            }
+                        } else if (*sp).file_idx > 0 {
+                            (*sp).file_idx -= 1;
+                            changed = true;
                         }
                     }
-                }
-                Key::Enter => {
-                    if !in_files {
-                        in_files = true;
-                        cur_file_idx = 0;
-                        draw_panes(cur_dir_idx, cur_file_idx, in_files);
-                    } else {
-                        // Open selected file in editor
-                        if let Some(name) = get_file_name_at(DIRS[cur_dir_idx], cur_file_idx) {
+                    Key::Down => {
+                        if !(*sp).in_files {
+                            if (*sp).dir_idx + 1 < DIRS.len() {
+                                (*sp).dir_idx += 1;
+                                (*sp).file_idx = 0;
+                                changed = true;
+                            }
+                        } else {
+                            let count = files_in_dir_count(DIRS[(*sp).dir_idx]);
+                            if (*sp).file_idx + 1 < count {
+                                (*sp).file_idx += 1;
+                                changed = true;
+                            }
+                        }
+                    }
+                    Key::Enter => {
+                        if !(*sp).in_files {
+                            (*sp).in_files = true;
+                            (*sp).file_idx = 0;
+                            changed = true;
+                        } else if let Some(name) =
+                            get_file_name_at(DIRS[(*sp).dir_idx], (*sp).file_idx)
+                        {
+                            open_fullscreen_modal();
                             editor::run_editor(name);
-                            term::clear();
-                            draw_chrome();
-                            draw_panes(cur_dir_idx, cur_file_idx, in_files);
+                            restore_after_modal(sp);
+                            changed = true;
                         }
                     }
-                }
-                Key::Char(b'v') | Key::Char(b'V') => {
-                    // View file
-                    if let Some(name) = get_file_name_at(DIRS[cur_dir_idx], cur_file_idx) {
-                        view_file_popup(name);
-                        term::clear();
-                        draw_chrome();
-                        draw_panes(cur_dir_idx, cur_file_idx, in_files);
+                    Key::Char(b'v') | Key::Char(b'V') => {
+                        if let Some(name) = get_file_name_at(DIRS[(*sp).dir_idx], (*sp).file_idx)
+                        {
+                            open_fullscreen_modal();
+                            view_file_popup(name);
+                            restore_after_modal(sp);
+                            changed = true;
+                        }
                     }
-                }
-                Key::Char(b'e') | Key::Char(b'E') => {
-                    // Edit file
-                    if let Some(name) = get_file_name_at(DIRS[cur_dir_idx], cur_file_idx) {
-                        editor::run_editor(name);
-                        term::clear();
-                        draw_chrome();
-                        draw_panes(cur_dir_idx, cur_file_idx, in_files);
+                    Key::Char(b'e') | Key::Char(b'E') => {
+                        if let Some(name) = get_file_name_at(DIRS[(*sp).dir_idx], (*sp).file_idx)
+                        {
+                            open_fullscreen_modal();
+                            editor::run_editor(name);
+                            restore_after_modal(sp);
+                            changed = true;
+                        }
                     }
+                    _ => {}
                 }
-                _ => {}
             }
-        }
 
-        if let Some(mev) = mouse::poll() {
-            if mev.left {
-                let cw = crate::fb::cell_w().max(1);
-                let ch = crate::fb::cell_h().max(1);
-                let col = mev.x / cw;
-                let row = mev.y / ch;
-
-                // Close button [X]
-                if row == FM_TOP && col >= FM_RIGHT - 4 {
-                    break;
-                }
-
-                // Left pane click (directories)
-                if col >= FM_LEFT + 1 && col < SPLIT_X && row >= FM_TOP + 2 && row < FM_TOP + 2 + DIRS.len() {
+            // --- mouse: pane clicks ---
+            if let Some((col, row)) = click {
+                // left pane click (directories)
+                if col >= FM_LEFT + 1 && col < SPLIT_X && row >= FM_TOP + 2 && row < FM_TOP + 2 + DIRS.len()
+                {
                     let d_idx = row - (FM_TOP + 2);
                     if d_idx < DIRS.len() {
-                        cur_dir_idx = d_idx;
-                        cur_file_idx = 0;
-                        in_files = false;
-                        draw_panes(cur_dir_idx, cur_file_idx, in_files);
+                        (*sp).dir_idx = d_idx;
+                        (*sp).file_idx = 0;
+                        (*sp).in_files = false;
+                        changed = true;
                     }
                 }
-
-                // Right pane click (files)
+                // right pane click (files)
                 if col > SPLIT_X && col < FM_RIGHT && row >= FM_TOP + 2 {
                     let f_idx = row - (FM_TOP + 2);
-                    let count = files_in_dir_count(DIRS[cur_dir_idx]);
+                    let count = files_in_dir_count(DIRS[(*sp).dir_idx]);
                     if f_idx < count {
-                        cur_file_idx = f_idx;
-                        in_files = true;
-                        draw_panes(cur_dir_idx, cur_file_idx, in_files);
+                        (*sp).file_idx = f_idx;
+                        (*sp).in_files = true;
+                        changed = true;
                     }
                 }
             }
         }
-        core::hint::spin_loop();
-    }
 
-    term::clear();
-    term::status_bar();
+        if changed {
+            draw_panes((*sp).dir_idx, (*sp).file_idx, (*sp).in_files);
+        }
+        changed
+    }
+}
+
+/// The view/editor modals are fullscreen and draw straight to the screen:
+/// leave window-buffer mode for their duration.
+fn open_fullscreen_modal() {
+    term::end_target();
+}
+
+/// Restore state after a fullscreen modal: clear the desktop, redraw this
+/// window's client, and tell the compositor everything changed.
+unsafe fn restore_after_modal(sp: *mut State) {
+    (*sp).dir_idx = (*sp).dir_idx.min(DIRS.len() - 1);
+    term::mark_bg_dirty();
+    draw_chrome();
+    draw_panes((*sp).dir_idx, (*sp).file_idx, (*sp).in_files);
 }
 
 fn draw_chrome() {
     let bg = term::theme_bg();
     let border = term::CYAN;
 
-    // Outer window border
+    // Outer window border (title bar above is drawn by the WM)
     term::put_at_colored(FM_LEFT, FM_TOP, 0xda, border, bg);
     for x in FM_LEFT + 1..FM_RIGHT {
         term::put_at_colored(x, FM_TOP, 0xc4, border, bg);
     }
     term::put_at_colored(FM_RIGHT, FM_TOP, 0xbf, border, bg);
-
-    let title = " [ TempleOS File Manager (FileMgr) ] ";
-    term::draw_text_at_colored(FM_LEFT + 3, FM_TOP, title, term::YELLOW, bg);
-    term::draw_text_at_colored(FM_RIGHT - 4, FM_TOP, "[X]", term::LIGHT_RED, bg);
 
     for y in FM_TOP + 1..FM_BOTTOM {
         term::put_at_colored(FM_LEFT, y, 0xb3, border, bg);
@@ -169,13 +221,14 @@ fn draw_chrome() {
     term::put_at_colored(SPLIT_X, FM_TOP, 0xc2, border, bg); // top tee
     term::put_at_colored(FM_RIGHT, FM_BOTTOM, 0xd9, border, bg);
 
-    // Bottom hints
-    for x in 0..term::COLS {
-        term::put_at_colored(x, term::STATUS_ROW, b' ', term::LIGHT_GRAY, term::DARK_GRAY);
+    // Bottom hints (inside the window, below the box)
+    let hy = FM_BOTTOM + 1;
+    for x in 0..WIN_W {
+        term::put_at_colored(x, hy, b' ', term::LIGHT_GRAY, term::DARK_GRAY);
     }
     term::draw_text_at_colored(
         1,
-        term::STATUS_ROW,
+        hy,
         "Tab: Switch Pane   Arrows: Select   Enter/E: Edit   V: View   Q: Exit",
         term::WHITE,
         term::DARK_GRAY,
@@ -303,7 +356,7 @@ fn view_file_popup(name: &str) {
         term::newline();
 
         while keyboard::poll().is_none() {
-            core::hint::spin_loop();
+            term::frame_wait();
         }
     }
 }
